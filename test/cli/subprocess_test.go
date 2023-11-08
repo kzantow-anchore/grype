@@ -11,7 +11,7 @@ import (
 )
 
 func TestSubprocessStdin(t *testing.T) {
-	binDir := path.Dir(getGrypeSnapshotLocation(t, "linux"))
+	binDir := path.Dir(grypeBinaryLocation(t, "linux", "amd64"))
 	tests := []struct {
 		name       string
 		args       []string
@@ -45,7 +45,7 @@ func TestSubprocessStdin(t *testing.T) {
 	for _, test := range tests {
 		testFn := func(t *testing.T) {
 			cmd := getDockerRunCommand(t, test.args...)
-			stdout, stderr := runCommand(cmd, test.env)
+			stdout, stderr, _ := runCommand(cmd, test.env)
 			for _, traitAssertionFn := range test.assertions {
 				traitAssertionFn(t, stdout, stderr, cmd.ProcessState.ExitCode())
 			}

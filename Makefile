@@ -44,7 +44,6 @@ DIST_DIR := ./dist
 SNAPSHOT_DIR := ./snapshot
 CHANGELOG := CHANGELOG.md
 OS := $(shell uname | tr '[:upper:]' '[:lower:]')
-SNAPSHOT_BIN := $(realpath $(shell pwd)/$(SNAPSHOT_DIR)/$(OS)-build_$(OS)_amd64_v1/$(BIN))
 
 ifndef TEMP_DIR
 	$(error TEMP_DIR is not set)
@@ -186,10 +185,7 @@ quality: ## Run quality tests
 
 .PHONY: cli
 cli: $(SNAPSHOT_DIR)  ## Run CLI tests
-	chmod 755 "$(SNAPSHOT_BIN)"
-	$(SNAPSHOT_BIN) version
-	SYFT_BINARY_LOCATION='$(SNAPSHOT_BIN)' \
-		go test -count=1 -timeout=15m -v ./test/cli
+	go test -count=1 -timeout=15m -v ./test/cli
 
 ## Test-fixture-related targets #################################
 

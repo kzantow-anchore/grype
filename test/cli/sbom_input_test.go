@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -82,7 +81,7 @@ func TestSBOMInput_FromStdin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(getGrypeSnapshotLocation(t, runtime.GOOS), tt.args...)
+			cmd := exec.Command(grypeBinaryLocation(t), tt.args...)
 
 			input, err := os.Open(tt.input)
 			require.NoError(t, err)
