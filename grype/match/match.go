@@ -42,54 +42,51 @@ func (m *Match) Merge(other Match) error {
 
 	// there are cases related vulnerabilities are synthetic, for example when
 	// orienting results by CVE. we need to keep track of these
-	related := strset.New()
-	for _, r := range m.Vulnerability.RelatedVulnerabilities {
-		related.Add(referenceID(r))
-	}
-	for _, r := range other.Vulnerability.RelatedVulnerabilities {
-		if related.Has(referenceID(r)) {
-			continue
-		}
-		m.Vulnerability.RelatedVulnerabilities = append(m.Vulnerability.RelatedVulnerabilities, r)
-	}
-
-	// for stable output
-	sort.Slice(m.Vulnerability.RelatedVulnerabilities, func(i, j int) bool {
-		a := m.Vulnerability.RelatedVulnerabilities[i]
-		b := m.Vulnerability.RelatedVulnerabilities[j]
-		return strings.Compare(referenceID(a), referenceID(b)) < 0
-	})
+	m.Vulnerability.RelatedVulnerabilities = mergeSlices(
+		m.Vulnerability.RelatedVulnerabilities,
+		other.Vulnerability.RelatedVulnerabilities,
+		func(r vulnerability.Reference) string {
+			return fmt.Sprintf("%s:%s", r.Namespace, r.ID)
+		},
+	)
 
 	// also keep details from the other match that are unique
-	detailIDs := strset.New()
-	for _, d := range m.Details {
-		detailIDs.Add(d.ID())
-	}
-	for _, d := range other.Details {
-		if detailIDs.Has(d.ID()) {
-			continue
-		}
-		m.Details = append(m.Details, d)
-	}
-
-	// for stable output
-	sort.Slice(m.Details, func(i, j int) bool {
-		a := m.Details[i]
-		b := m.Details[j]
-		return strings.Compare(a.ID(), b.ID()) < 0
-	})
+	m.Details = mergeSlices(
+		m.Details,
+		other.Details,
+		func(detail Detail) string {
+			return detail.ID()
+		},
+	)
 
 	// retain all unique CPEs for consistent output
-	m.Vulnerability.CPEs = cpe.Merge(m.Vulnerability.CPEs, other.Vulnerability.CPEs)
-	if m.Vulnerability.CPEs == nil {
-		// ensure we always have a non-nil slice
-		m.Vulnerability.CPEs = []cpe.CPE{}
-	}
+	m.Vulnerability.CPEs = ensureNonNil(cpe.Merge(m.Vulnerability.CPEs, other.Vulnerability.CPEs))
 
 	return nil
 }
 
-// referenceID returns an "ID" string for a vulnerability.Reference
-func referenceID(r vulnerability.Reference) string {
-	return fmt.Sprintf("%s:%s", r.Namespace, r.ID)
+func mergeSlices[T any](existing []T, new []T, id func(T) string) []T {
+	ids := strset.New()
+	for _, t := range existing {
+		ids.Add(id(t))
+	}
+	for _, t := range new {
+		if !ids.Has(id(t)) {
+			existing = append(existing, t)
+		}
+	}
+
+	// for stable output
+	sort.Slice(existing, func(i, j int) bool {
+		return strings.Compare(id(existing[i]), id(existing[j])) < 0
+	})
+
+	return existing
+}
+
+func ensureNonNil[T any](slice []T) []T {
+	if slice == nil {
+		return []T{}
+	}
+	return slice
 }
