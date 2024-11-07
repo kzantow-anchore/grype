@@ -1,13 +1,18 @@
 package db
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hako/durafmt"
@@ -44,6 +49,8 @@ type Config struct {
 
 type Curator struct {
 	fs                  afero.Fs
+	stage               progress.AtomicStage
+	httpClient          *http.Client
 	listingDownloader   file.Getter
 	updateDownloader    file.Getter
 	targetSchema        int
@@ -60,21 +67,20 @@ func NewCurator(cfg Config) (Curator, error) {
 	dbDir := path.Join(cfg.DBRootDir, strconv.Itoa(vulnerability.SchemaVersion))
 
 	fs := afero.NewOsFs()
-	listingClient, err := defaultHTTPClient(fs, cfg.CACert)
+	listingClient, err := defaultHTTPClient(fs, cfg.CACert, cfg.ListingFileTimeout)
 	if err != nil {
 		return Curator{}, err
 	}
-	listingClient.Timeout = cfg.ListingFileTimeout
 
-	dbClient, err := defaultHTTPClient(fs, cfg.CACert)
+	dbClient, err := defaultHTTPClient(fs, cfg.CACert, cfg.UpdateTimeout)
 	if err != nil {
 		return Curator{}, err
 	}
-	dbClient.Timeout = cfg.UpdateTimeout
 
 	return Curator{
 		fs:                  fs,
 		targetSchema:        vulnerability.SchemaVersion,
+		httpClient:          listingClient,
 		listingDownloader:   file.NewGetter(listingClient),
 		updateDownloader:    file.NewGetter(dbClient),
 		dbDir:               dbDir,
@@ -93,7 +99,7 @@ func (c Curator) SupportedSchema() int {
 
 func (c *Curator) GetStore() (grypeDB.StoreReader, grypeDB.DBCloser, error) {
 	// ensure the DB is ok
-	_, err := c.validateIntegrity(c.dbDir)
+	_, err := c.validateIntegrity(executionContext{ctx: context.Background()}, c.dbDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vulnerability database is invalid (run db update to correct): %+v", err)
 	}
@@ -224,32 +230,28 @@ func (c *Curator) IsUpdateAvailable() (bool, *Metadata, *ListingEntry, error) {
 func (c *Curator) UpdateTo(listing *ListingEntry, downloadProgress, importProgress *progress.Manual, stage *progress.AtomicStage) error {
 	stage.Set("downloading")
 	// note: the temp directory is persisted upon download/validation/activation failure to allow for investigation
-	tempDir, err := c.download(listing, downloadProgress)
-	if err != nil {
-		return err
-	}
-
-	stage.Set("validating integrity")
-	_, err = c.validateIntegrity(tempDir)
+	tempArchivePath, err := c.downloadListingEntry(listing, downloadProgress)
 	if err != nil {
 		return err
 	}
 
 	stage.Set("importing")
-	err = c.activate(tempDir)
+	err = c.ImportFrom(tempArchivePath, importProgress, stage)
 	if err != nil {
 		return err
 	}
+
 	stage.Set("updated")
 	importProgress.Set(importProgress.Size())
 	importProgress.SetCompleted()
 
-	return c.fs.RemoveAll(tempDir)
+	// only remove the temp archive on success
+	return c.fs.RemoveAll(tempArchivePath)
 }
 
 // Validate checks the current database to ensure file integrity and if it can be used by this version of the application.
-func (c *Curator) Validate() error {
-	metadata, err := c.validateIntegrity(c.dbDir)
+func (c *Curator) Validate(ctx context.Context) error {
+	metadata, err := c.validateIntegrity(executionContext{ctx: ctx}, c.dbDir)
 	if err != nil {
 		return err
 	}
@@ -257,63 +259,146 @@ func (c *Curator) Validate() error {
 	return c.validateStaleness(metadata)
 }
 
-// ImportFrom takes a DB archive file and imports it into the final DB location.
-func (c *Curator) ImportFrom(dbArchivePath string) error {
-	// note: the temp directory is persisted upon download/validation/activation failure to allow for investigation
-	tempDir, err := os.MkdirTemp("", "grype-import")
-	if err != nil {
-		return fmt.Errorf("unable to create db temp dir: %w", err)
-	}
-
-	err = archiver.Unarchive(dbArchivePath, tempDir)
-	if err != nil {
-		return err
-	}
-
-	_, err = c.validateIntegrity(tempDir)
-	if err != nil {
-		return err
-	}
-
-	err = c.activate(tempDir)
-	if err != nil {
-		return err
-	}
-
-	return c.fs.RemoveAll(tempDir)
+func (c *Curator) tempDownloadPath(fileName string) string {
+	return filepath.Join(c.dbDir, fileName) + ".temp"
 }
 
-func (c *Curator) download(listing *ListingEntry, downloadProgress *progress.Manual) (string, error) {
-	tempDir, err := os.MkdirTemp("", "grype-scratch")
+func (c *Curator) tempDbDir() string {
+	return c.dbDir + ".temp"
+}
+
+// ImportFrom takes a DB archive file and imports it into the final DB location.
+func (c *Curator) ImportFrom(dbArchivePath string, importProgress *progress.Manual, stage *progress.AtomicStage) error {
+	f, err := os.Open(dbArchivePath)
 	if err != nil {
-		return "", fmt.Errorf("unable to create db temp dir: %w", err)
+		return err
 	}
 
-	// download the db to the temp dir
-	url := listing.URL
+	return c.extractDBArchivetoDBDir(dbArchivePath, f, importProgress, stage)
+}
 
-	// from go-getter, adding a checksum as a query string will validate the payload after download
-	// note: the checksum query parameter is not sent to the server
-	query := url.Query()
-	query.Add("checksum", listing.Checksum)
-	url.RawQuery = query.Encode()
-
-	// go-getter will automatically extract all files within the archive to the temp dir
-	err = c.updateDownloader.GetToDir(tempDir, listing.URL.String(), downloadProgress)
+func (c *Curator) extractDBArchivetoDBDir(ctx executionContext, fileName string, f io.ReadCloser) error {
+	err := extractToDir(fileName, f, c.fs, c.tempDbDir())
 	if err != nil {
-		return "", fmt.Errorf("unable to download db: %w", err)
+		return err
 	}
 
-	return tempDir, nil
+	_, err = c.validateIntegrity(ctx, c.tempDbDir())
+	if err != nil {
+		return err
+	}
+
+	bakDir := c.dbDir + ".bak"
+	err = moveFile(c.fs, c.dbDir, bakDir)
+	if err != nil {
+		return err
+	}
+
+	err = moveFile(c.fs, c.tempDbDir(), c.dbDir)
+	if err != nil {
+		return err
+	}
+
+	// note: the temp directory is persisted upon download/validation/activation failure to allow for investigation
+	err = c.fs.RemoveAll(bakDir)
+	if err != nil {
+		log.Warnf("unable to remove temporary directory: %v", err)
+	}
+	return nil
+
+}
+
+func moveFile(fs afero.Fs, from string, to string) error {
+	if s, err := fs.Stat(to); err == nil && s.IsDir() {
+		err = fs.RemoveAll(to)
+		if err != nil {
+			log.Warnf("unable to remove existing dir: %v", err)
+		}
+	}
+	return fs.Rename(from, to)
+}
+
+func extractToDir(fileName string, reader io.ReadCloser, fsys afero.Fs, destinationDir string) error {
+	fileName = path.Base(filepath.Base(fileName))
+	unarchiver, err := archiver.ByExtension(fileName)
+
+	if err != nil {
+		return err
+	}
+	rdr, ok := unarchiver.(archiver.Reader)
+	if !ok {
+		// TODO try different formats
+		return fmt.Errorf("format specified by source filename is not an archive format: %s (%T)", fileName, unarchiver)
+	}
+
+	err = rdr.Open(reader, 0)
+	if err != nil {
+		return fmt.Errorf("opening archive: %v", err)
+	}
+	defer func() {
+		err := reader.Close()
+		if err != nil {
+			log.Debugf("unable to close archive reader: %v", err)
+		}
+	}()
+	destinationDir = filepath.Clean(destinationDir)
+	for f, err := rdr.Read(); err == nil; f, err = rdr.Read() {
+		targetPath := filepath.Clean(filepath.Join(destinationDir, f.Name()))
+		if !strings.HasPrefix(targetPath, destinationDir) {
+			log.Debugf("skipping file which would be written outside of desitination directory: %v", f.Name())
+			continue
+		}
+		targetFile, err := fsys.OpenFile(targetPath, os.O_CREATE|os.O_RDWR, f.Mode())
+		_, err = io.Copy(targetFile, f)
+		if err != nil {
+			log.Warnf("unable to write to file: %v: %v", targetPath, err)
+			continue
+		}
+		closeAndLogError(targetFile)
+		err = fsys.Chtimes(targetPath, f.ModTime(), f.ModTime())
+		if err != nil {
+			log.Tracef("unable to chtimes: %v: %v", targetPath, err)
+		}
+	}
+	return nil
+}
+
+func (c *Curator) downloadListingEntry(ctx executionContext, listing *ListingEntry) (string, error) {
+	if listing == nil || listing.URL == nil {
+		return "", fmt.Errorf("no URL provided in listing entry")
+	}
+
+	targetFileName := path.Base(listing.URL.Path)
+	targetFileName = filepath.Join(c.dbDir, targetFileName)
+
+	// download the db a temporary file in the cache dir
+	err := c.download(ctx, listing.URL, targetFileName, listing.Checksum)
+
+	if err != nil {
+		return filePath, err
+	}
+
+	return filePath, nil
+}
+
+func (c *Curator) download(ctx executionContext, url *url.URL, targetPath string, checksum string) error {
+	if url == nil {
+		return fmt.Errorf("no URL provided")
+	}
+	dl := downloader{
+		fs:      c.fs,
+		ctx:     ctx.ctx,
+		notify:  nil,
+		retries: 0,
+		timeout: 0,
+	}
+
+	return nil
 }
 
 // validateStaleness ensures the vulnerability database has not passed
 // the max allowed age, calculated from the time it was built until now.
 func (c *Curator) validateStaleness(m Metadata) error {
-	if !c.validateAge {
-		return nil
-	}
-
 	// built time is defined in UTC,
 	// we should compare it against UTC
 	now := time.Now().UTC()
@@ -326,7 +411,7 @@ func (c *Curator) validateStaleness(m Metadata) error {
 	return nil
 }
 
-func (c *Curator) validateIntegrity(dbDirPath string) (Metadata, error) {
+func (c *Curator) validateIntegrity(ctx executionContext, dbDirPath string) (Metadata, error) {
 	// check that the disk checksum still matches the db payload
 	metadata, err := NewMetadataFromDir(c.fs, dbDirPath)
 	if err != nil {
@@ -336,15 +421,13 @@ func (c *Curator) validateIntegrity(dbDirPath string) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("database metadata not found: %s", dbDirPath)
 	}
 
-	if c.validateByHashOnGet {
-		dbPath := path.Join(dbDirPath, FileName)
-		valid, actualHash, err := file.ValidateByHash(c.fs, dbPath, metadata.Checksum)
-		if err != nil {
-			return Metadata{}, err
-		}
-		if !valid {
-			return Metadata{}, fmt.Errorf("bad db checksum (%s): %q vs %q", dbPath, metadata.Checksum, actualHash)
-		}
+	dbPath := path.Join(dbDirPath, FileName)
+	valid, actualHash, err := file.ValidateByHash(c.fs, dbPath, metadata.Checksum)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if !valid {
+		return Metadata{}, fmt.Errorf("bad db checksum (%s): %q vs %q", dbPath, metadata.Checksum, actualHash)
 	}
 
 	if c.targetSchema != metadata.Version {
@@ -356,26 +439,26 @@ func (c *Curator) validateIntegrity(dbDirPath string) (Metadata, error) {
 	return *metadata, nil
 }
 
-// activate swaps over the downloaded db to the application directory
-func (c *Curator) activate(dbDirPath string) error {
-	_, err := c.fs.Stat(c.dbDir)
-	if !os.IsNotExist(err) {
-		// remove any previous databases
-		err = c.Delete()
-		if err != nil {
-			return fmt.Errorf("failed to purge existing database: %w", err)
-		}
-	}
-
-	// ensure there is an application db directory
-	err = c.fs.MkdirAll(c.dbDir, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to create db directory: %w", err)
-	}
-
-	// activate the new db cache
-	return file.CopyDir(c.fs, dbDirPath, c.dbDir)
-}
+//// activate swaps over the downloaded db to the application directory
+//func (c *Curator) activate(dbDirPath string) error {
+//	_, err := c.fs.Stat(c.dbDir)
+//	if !os.IsNotExist(err) {
+//		// remove any previous databases
+//		err = c.Delete()
+//		if err != nil {
+//			return fmt.Errorf("failed to purge existing database: %w", err)
+//		}
+//	}
+//
+//	// ensure there is an application db directory
+//	err = c.fs.MkdirAll(c.dbDir, 0755)
+//	if err != nil {
+//		return fmt.Errorf("failed to create db directory: %w", err)
+//	}
+//
+//	// activate the new db cache
+//	return file.CopyDir(c.fs, dbDirPath, c.dbDir)
+//}
 
 // ListingFromURL loads a Listing from a URL.
 func (c Curator) ListingFromURL() (Listing, error) {
@@ -404,9 +487,19 @@ func (c Curator) ListingFromURL() (Listing, error) {
 	return listing, nil
 }
 
-func defaultHTTPClient(fs afero.Fs, caCertPath string) (*http.Client, error) {
+func defaultHTTPClient(fs afero.Fs, caCertPath string, timeout time.Duration) (*http.Client, error) {
 	httpClient := cleanhttp.DefaultClient()
-	httpClient.Timeout = 30 * time.Second
+	httpClient.Timeout = timeout
+
+	tx, ok := httpClient.Transport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("unable to get http.Transport")
+	}
+	tx.IdleConnTimeout = timeout
+	tx.ExpectContinueTimeout = timeout
+	tx.ResponseHeaderTimeout = timeout
+	tx.TLSHandshakeTimeout = timeout
+
 	if caCertPath != "" {
 		rootCAs := x509.NewCertPool()
 
@@ -416,7 +509,7 @@ func defaultHTTPClient(fs afero.Fs, caCertPath string) (*http.Client, error) {
 		}
 		rootCAs.AppendCertsFromPEM(pemBytes)
 
-		httpClient.Transport.(*http.Transport).TLSClientConfig = &tls.Config{
+		tx.TLSClientConfig = &tls.Config{
 			MinVersion: tls.VersionTLS12,
 			RootCAs:    rootCAs,
 		}
