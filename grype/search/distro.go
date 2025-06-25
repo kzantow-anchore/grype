@@ -12,7 +12,6 @@ import (
 )
 
 func ByDistroRange(ranges ...DistroRange) vulnerability.Criteria {
-
 	for i := range ranges {
 		r := &ranges[i]
 		var variant string

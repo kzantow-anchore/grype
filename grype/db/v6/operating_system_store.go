@@ -3,12 +3,12 @@ package v6
 import (
 	"errors"
 	"fmt"
-	"github.com/anchore/grype/grype/version"
 	"regexp"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/anchore/grype/grype/version"
 	"github.com/anchore/grype/internal/log"
 )
 

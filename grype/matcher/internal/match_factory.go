@@ -2,15 +2,17 @@ package internal
 
 import (
 	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/scylladb/go-set/strset"
+
 	"github.com/anchore/go-logger"
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/version"
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/grype/internal/log"
-	"github.com/scylladb/go-set/strset"
-	"sort"
-	"strings"
 )
 
 // Disclosure represents a claim of something being vulnerable.
@@ -30,7 +32,7 @@ type advisory Disclosure
 // Resolution represents the conclusion of a vulnerability being fixed, wont-fixed, or not-fixed, and the specifics thereof.
 type Resolution struct {
 	// temporary
-	//config *ResolutionConfig // the config used to create this resolution, which contains the prototype and other information
+	// config *ResolutionConfig // the config used to create this resolution, which contains the prototype and other information
 	vulnerability.Reference
 	vulnerability.Fix
 	Constraint version.Constraint // TODO: i really don't want this here, but we don't have the format until we expose the data from the fix directly
@@ -57,7 +59,7 @@ type DisclosureConfig struct {
 	MatchPrototype   MatchPrototype
 }
 
-//type ResolutionConfig struct {
+// type ResolutionConfig struct {
 //	IgnoreRuleGenerator func(pkg.Package, vulnerability.Vulnerability) []match.IgnoreFilter // a function that returns the "ignore rule" for the resolution
 //}
 
@@ -91,8 +93,8 @@ func (c *MatchFactory) addDisclosure(cfg *DisclosureConfig, d Disclosure) {
 	}
 	c.ids.Add(d.ID)
 
-	if !cfg.KeepFixVersions && len(d.Vulnerability.Fix.Versions) > 0 {
-		d.Vulnerability.Fix = vulnerability.Fix{
+	if !cfg.KeepFixVersions && len(d.Fix.Versions) > 0 {
+		d.Fix = vulnerability.Fix{
 			State: vulnerability.FixStateUnknown,
 		}
 	}
@@ -110,7 +112,7 @@ func (c *MatchFactory) AddVulnsAsResolutions(vs ...vulnerability.Vulnerability) 
 			return // we cannot add a resolution without an ID
 		}
 		c.ids.Add(r.ID)
-		//r.config = &cfg
+		// r.config = &cfg
 		if existing, ok := c.resolutionsByID[r.ID]; ok {
 			c.resolutionsByID[r.ID] = append(existing, r)
 		} else {
@@ -127,7 +129,6 @@ func (c *MatchFactory) reconcile() ([]advisory, []match.IgnoreFilter, error) {
 	var ignored []match.IgnoreFilter
 vulnLoop:
 	for _, id := range ids {
-
 		ds, ok := c.disclosuresByID[id]
 		if len(ds) == 0 || !ok {
 			log.WithFields(logger.Fields{
@@ -139,9 +140,7 @@ vulnLoop:
 		rs, ok := c.resolutionsByID[id]
 		if len(rs) == 0 || !ok {
 			// no resolutions found for this vulnerability, so we will not include it
-			for _, d := range ds {
-				vulns = append(vulns, d)
-			}
+			vulns = append(vulns, ds...)
 			continue vulnLoop
 		}
 
@@ -151,7 +150,7 @@ vulnLoop:
 			fixVersions := strset.New()
 			var state vulnerability.FixState
 			for _, r := range rs {
-				switch r.Fix.State {
+				switch r.State {
 				case vulnerability.FixStateWontFix, vulnerability.FixStateUnknown:
 					// these do not negate disclosures, so we will skip them
 					continue
@@ -171,9 +170,9 @@ vulnLoop:
 				}
 				// we're vulnerable! keep any fix versions that could have been applied
 
-				fixVersions.Add(r.Fix.Versions...)
+				fixVersions.Add(r.Versions...)
 				if state != vulnerability.FixStateFixed {
-					state = r.Fix.State
+					state = r.State
 				}
 			}
 

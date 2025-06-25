@@ -60,7 +60,7 @@ func ParseVersion(version string) (major, minor, remaining, variant string) {
 		version = vParts[0]
 		variant = vParts[1]
 
-		//case strings.Contains(version, "-"):
+		// case strings.Contains(version, "-"):
 		//	vParts := strings.Split(version, "-")
 		//	version = vParts[0]
 		//	variant = vParts[1]
