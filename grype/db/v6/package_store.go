@@ -243,6 +243,13 @@ func getPackages[T packageHandleStore]( //nolint:funlen
 		return nil, err
 	}
 
+	results, err := fillQuery[T](s, query, config)
+	count = len(results)
+	return results, err
+}
+
+func fillQuery[T packageHandleStore](s *packageStore, query *gorm.DB, config *GetPackageOptions) ([]T, error) {
+
 	query = s.handlePreload(query, *config)
 
 	var models []T
@@ -273,8 +280,6 @@ func getPackages[T packageHandleStore]( //nolint:funlen
 		}
 
 		models = append(models, results...)
-
-		count += len(results)
 
 		if config.Limit > 0 && len(models) >= config.Limit {
 			return ErrLimitReached

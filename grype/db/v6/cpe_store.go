@@ -149,6 +149,19 @@ func getCPEHandles[T cpeHandleStore]( // nolint:funlen
 
 	query = s.handlePreload(query, *config)
 
+	results, err := queryCPEHandles[T](s, query, config)
+	if err != nil {
+		return nil, err
+	}
+	count = len(results)
+	return results, nil
+}
+
+func queryCPEHandles[T cpeHandleStore]( // nolint:funlen
+	s *cpeStore,
+	query *gorm.DB,
+	config *GetCPEOptions,
+) ([]T, error) {
 	var models []T
 	var results []T
 
@@ -177,8 +190,6 @@ func getCPEHandles[T cpeHandleStore]( // nolint:funlen
 		}
 
 		models = append(models, results...)
-
-		count += len(results)
 
 		if config.Limit > 0 && len(models) >= config.Limit {
 			return ErrLimitReached

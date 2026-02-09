@@ -2,6 +2,8 @@ package v6
 
 import (
 	"errors"
+
+	"github.com/anchore/grype/internal/log"
 )
 
 // fillAffectedPackageHandles lazy loads all properties on the list of AffectedPackageHandles
@@ -122,6 +124,10 @@ func fillVulnerabilityHandles[T any](reader Reader, handles []*T, vulnHandleRef 
 	vulnHandles := make([]*VulnerabilityHandle, len(handles))
 	for i := range handles {
 		vulnHandles[i] = *vulnHandleRef(handles[i]).ref
+		if vulnHandles[i] == nil {
+			log.Debugf("nil vulnHandle ref: %v", handles[i])
+			continue
+		}
 		providerRefs = append(providerRefs, ref[string, Provider]{
 			id:  &vulnHandles[i].ProviderID,
 			ref: &vulnHandles[i].Provider,
