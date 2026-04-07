@@ -7,3 +7,4 @@ migrate.py
 .oras-cache
 *.tar.gz
 *.tar.zst
+/.docker-tools/

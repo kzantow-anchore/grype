@@ -75,3 +75,7 @@ clean: clear-results ## Clear all existing yardstick results and delete python e
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "$(BOLD)$(CYAN)%-25s$(RESET)%s\n", $$1, $$2}'
 
+.PHONY: docker
+docker: ## Build and run in a Docker container
+	docker build -t grype-test-quality-dev .
+	docker run --rm -it -v ../..:/src -v ./.docker-tools:/src/.tool --workdir /src/test/quality grype-test-quality-dev
