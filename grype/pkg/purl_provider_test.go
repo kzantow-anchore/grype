@@ -173,6 +173,9 @@ func Test_PurlProvider(t *testing.T) {
 							Version: "239-82.el8_10.2",
 						},
 					},
+					Metadata: RpmMetadata{
+						Arch: "aarch64",
+					},
 				},
 			},
 		},
@@ -194,6 +197,9 @@ func Test_PurlProvider(t *testing.T) {
 					Type:    pkg.RpmPkg,
 					PURL:    "pkg:rpm/redhat/dbus-common@1.12.8-26.el8?arch=noarch&distro=rhel-8.10&epoch=1&upstream=dbus-1.12.8-26.el8.src.rpm",
 					Distro:  &distro.Distro{Type: distro.RedHat, Version: "8.10", Codename: "", IDLike: []string{"redhat"}},
+					Metadata: RpmMetadata{
+						Arch: "noarch",
+					},
 					Upstreams: []UpstreamPackage{
 						{
 							Name:    "dbus",
@@ -223,6 +229,7 @@ func Test_PurlProvider(t *testing.T) {
 					Distro:  &distro.Distro{Type: distro.RedHat, Version: "8.7", Codename: "", IDLike: []string{"redhat"}},
 					Metadata: RpmMetadata{
 						ModularityLabel: strRef("httpd:2.4"),
+						Arch:            "x86_64",
 					},
 				},
 			},
@@ -240,11 +247,12 @@ func Test_PurlProvider(t *testing.T) {
 			},
 			wantPkgs: []*Package{
 				{
-					Name:    "curl",
-					Version: "7.61.1",
-					Type:    pkg.ApkPkg,
-					PURL:    "pkg:apk/curl@7.61.1?arch=aarch64&distro=alpine-3.20.3",
-					Distro:  &distro.Distro{Type: distro.Alpine, Version: "3.20.3", Codename: "", IDLike: []string{"alpine"}},
+					Name:     "curl",
+					Version:  "7.61.1",
+					Type:     pkg.ApkPkg,
+					PURL:     "pkg:apk/curl@7.61.1?arch=aarch64&distro=alpine-3.20.3",
+					Distro:   &distro.Distro{Type: distro.Alpine, Version: "3.20.3", Codename: "", IDLike: []string{"alpine"}},
+					Metadata: ApkMetadata{Files: []ApkFileRecord{}, Arch: "aarch64"},
 				},
 			},
 		},

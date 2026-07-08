@@ -130,6 +130,7 @@ func TestNew(t *testing.T) {
 			},
 			metadata: RpmMetadata{
 				Epoch: intRef(30),
+				Arch:  "arch-info",
 			},
 			upstreams: []UpstreamPackage{
 				{
@@ -168,6 +169,7 @@ func TestNew(t *testing.T) {
 			},
 			metadata: RpmMetadata{
 				Epoch: intRef(30),
+				Arch:  "arch-info",
 			},
 			upstreams: []UpstreamPackage{
 				{
@@ -184,7 +186,8 @@ func TestNew(t *testing.T) {
 					SourceRpm: "sqlite-3.26.0-6.el8.src.rpm",
 				},
 			},
-			metadata: RpmMetadata{},
+			// source matches the package name (so no upstream) and neither epoch nor
+			// modularity is set, so grype keeps nothing: metadata is nil, not an empty struct.
 		},
 		{
 			name: "rpm archive with modularity label",
@@ -260,14 +263,57 @@ func TestNew(t *testing.T) {
 					InstalledSize: 1,
 				},
 			},
+			metadata: ApkMetadata{
+				Files: []ApkFileRecord{},
+				Arch:  "a",
+			},
 			upstreams: []UpstreamPackage{
 				{
 					Name: "libcurl",
 				},
 			},
-			metadata: ApkMetadata{Files: []ApkFileRecord{}},
+		},
+		{
+			name: "apk with architecture only",
+			syftPkg: syftPkg.Package{
+				Metadata: syftPkg.ApkDBEntry{
+					Architecture: "amd64",
+				},
+			},
+			metadata: ApkMetadata{
+				Files: []ApkFileRecord{},
+				Arch:  "amd64",
+			},
+		},
+		{
+			name: "apk with no architecture or files",
+			syftPkg: syftPkg.Package{
+				Metadata: syftPkg.ApkDBEntry{
+					Package: "some-pkg",
+					Version: "1.0.0",
+				},
+			},
+			// neither architecture nor files: metadata is nil
 		},
 		// the below packages are those that have no metadata or upstream info to parse out
+		{
+			name: "bun-lock-entry",
+			syftPkg: syftPkg.Package{
+				Metadata: syftPkg.BunLockEntry{},
+			},
+		},
+		{
+			name: "deno-lock-entry",
+			syftPkg: syftPkg.Package{
+				Metadata: syftPkg.DenoLockEntry{},
+			},
+		},
+		{
+			name: "deno-remote-lock-entry",
+			syftPkg: syftPkg.Package{
+				Metadata: syftPkg.DenoRemoteLockEntry{},
+			},
+		},
 		{
 			name: "npm-metadata",
 			syftPkg: syftPkg.Package{

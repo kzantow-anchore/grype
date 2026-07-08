@@ -29,9 +29,10 @@ var (
 	Alpine318 = distro.New(distro.Alpine, "3.18", "")
 	Alpine319 = distro.New(distro.Alpine, "3.19", "")
 
-	// Wolfi is rolling; version is unused for matching but preserved here for
-	// readability at call sites.
-	WolfiRolling = distro.New(distro.Wolfi, "", "")
+	// Wolfi and Chainguard are both rolling-release apk distros; version is
+	// unused for matching but preserved here for readability at call sites.
+	WolfiRolling      = distro.New(distro.Wolfi, "", "")
+	ChainguardRolling = distro.New(distro.Chainguard, "", "")
 
 	RHEL7  = distro.New(distro.RedHat, "7", "")
 	RHEL8  = distro.New(distro.RedHat, "8", "")
@@ -48,7 +49,8 @@ var (
 
 // PackageBuilder provides a fluent API for building test packages.
 type PackageBuilder struct {
-	pkg pkg.Package
+	pkg  pkg.Package
+	arch string
 }
 
 // NewPackage creates a new PackageBuilder with the given name, version, and type.
@@ -81,6 +83,15 @@ func (b *PackageBuilder) WithID(id pkg.ID) *PackageBuilder {
 // WithDistro sets the package's distro.
 func (b *PackageBuilder) WithDistro(d *distro.Distro) *PackageBuilder {
 	b.pkg.Distro = d
+	return b
+}
+
+// WithArchitecture sets the package architecture (e.g., "x86_64", "aarch64"), stamped onto
+// the rpm metadata at Build time. Read by the architectureQualifier at match time to match a
+// package against the architecture a vulnerability entry applies to. Applied last so it
+// composes with WithMetadata regardless of call order.
+func (b *PackageBuilder) WithArchitecture(arch string) *PackageBuilder {
+	b.arch = arch
 	return b
 }
 
@@ -154,6 +165,13 @@ func (b *PackageBuilder) WithRelatedPackage(relationshipType artifact.Relationsh
 func (b *PackageBuilder) Build() pkg.Package {
 	if b.pkg.ID == "" {
 		b.pkg.ID = pkg.ID(uuid.New().String())
+	}
+	if b.arch != "" {
+		// arch lives on the rpm metadata contract; stamp it onto any existing RpmMetadata,
+		// otherwise synthesize one (arch-based matching is rpm-only today).
+		m, _ := b.pkg.Metadata.(pkg.RpmMetadata)
+		m.Arch = b.arch
+		b.pkg.Metadata = m
 	}
 	return b.pkg
 }
