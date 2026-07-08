@@ -1,0 +1,30 @@
+{
+  "name": "grype-dev",
+  "dockerComposeFile": ["docker-compose.yml"],
+  "service": "dev",
+  "containerUser": "dev",
+  "remoteUser": "dev",
+  "workspaceFolder": "/src/grype",
+  "overrideCommand": true,
+
+  "containerEnv": {
+    "GOROOT": "/home/dev/go",
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-python.python"
+      ],
+      "settings": {
+      }
+    },
+    "jetbrains": {
+      "plugins": [
+        "org.jetbrains.plugins.go",
+        "Pythonid"
+      ]
+    }
+  }
+}

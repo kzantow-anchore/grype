@@ -1,0 +1,25 @@
+services:
+  dev:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+    privileged: false
+    cap_add:
+      - SYS_PTRACE
+    environment:
+      BINNY_ROOT: /home/dev/.tool
+    volumes:
+      - ~/.claude/:/home/dev/.claude/
+      - ~/.claude.json:/home/dev/.claude.json
+      - ~/.devcontainer-cache/go/:/home/dev/go/
+      - ~/.devcontainer-cache/.tool/:/src/grype/.tool/
+      - ~/.devcontainer-cache/.cache/:/home/dev/.cache/
+      - ../../:/src/
+    working_dir: /src/grype
+    networks:
+      - dev
+
+networks:
+  dev:
+    driver: bridge
