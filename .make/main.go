@@ -49,6 +49,13 @@ func main() {
 
 		showTestImageCacheTask(),
 		cleanCacheTask(),
+
+		Task{
+			Name: "dev",
+			Run: func() {
+				Run("docker compose -f .devcontainer/docker-compose.yml run --rm -it --workdir /src/grype dev")
+			},
+		},
 	)
 }
 
