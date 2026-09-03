@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/grype/grype/match"
@@ -14,63 +15,6 @@ import (
 
 // splitPkg is the package every case in this file is scanned as; only its identity matters.
 var splitPkg = pkg.Package{ID: "pkg-1", Name: "openssl", Version: "1.1.1-2rfubu.1"}
-
-// record builds one hydrated DB record: a single affected range and the fix it names, if any.
-func record(id, namespace, constraint string, fixVersions ...string) vulnerability.Vulnerability {
-	v := vulnerability.Vulnerability{
-		Reference:   vulnerability.Reference{ID: id, Namespace: namespace},
-		PackageName: splitPkg.Name,
-		Constraint:  version.MustGetConstraint(constraint, version.DebFormat),
-	}
-	if len(fixVersions) > 0 {
-		v.Fix = vulnerability.Fix{State: vulnerability.FixStateFixed, Versions: fixVersions}
-	} else {
-		v.Fix = vulnerability.Fix{State: vulnerability.FixStateNotFixed}
-	}
-	return v
-}
-
-// confidenceForNamespace ranks a hand-built record the way the confidence on a real record's match
-// details ranks it: rows from a release channel speak for this build in particular, everything else
-// describes the release the build sits in. A real record's rank is read off the details of the
-// search that found it (see confidenceOf); a namespace is the only handle these fixtures have on
-// the same fact.
-func confidenceForNamespace(namespace string) float64 {
-	if i := strings.LastIndex(namespace, ":"); i >= 0 && strings.Contains(namespace[i:], "+") {
-		return 1.0
-	}
-	return 0.5
-}
-
-// confidenceDetails is the one match detail a fixture record carries: the confidence the search that
-// found it recorded, which is what the split tiers on.
-func confidenceDetails(confidence float64) match.Details {
-	return match.Details{match.ConfidenceDetail(match.DpkgMatcher, "", confidence)}
-}
-
-// setOf puts every record under one entry, the way a single search that turned up several streams'
-// rows for one vulnerability does. Each record's tier is derived from the role its namespace implies
-// by the same function the matchers use, so these fixtures cannot drift from real ranking.
-func setOf(id string, vulns ...vulnerability.Vulnerability) Set {
-	var results []Result
-	for _, v := range vulns {
-		results = append(results, Result{
-			ID:              id,
-			Package:         &splitPkg,
-			Vulnerabilities: []vulnerability.Vulnerability{v},
-			Details:         confidenceDetails(confidenceForNamespace(v.Namespace)),
-		})
-	}
-	return Set{id: results}
-}
-
-func namespacesOf(s Set) []string {
-	var out []string
-	for _, v := range s.Vulnerabilities() {
-		out = append(out, v.Namespace)
-	}
-	return out
-}
 
 func debVersion(raw string) *version.Version {
 	return version.New(raw, version.DebFormat)
@@ -328,4 +272,114 @@ func TestSet_SplitVulnerable_UsesEachResultsOwnSearchedVersion(t *testing.T) {
 		require.Len(t, vulnerable, 1)
 		require.Len(t, vulnerable["CVE-1"], 1, "only the record whose own version is in range survives")
 	})
+}
+
+func TestDetails_searchedPackageVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		details match.Details
+		want    string
+		wantOK  bool
+	}{
+		{
+			name:    "distro details name the version their search was made at",
+			details: match.Details{{SearchedBy: match.DistroParameters{Package: match.PackageParameter{Name: "openssl", Version: "1.1.1"}}}},
+			want:    "1.1.1",
+			wantOK:  true,
+		},
+		{
+			name:    "ecosystem details do too",
+			details: match.Details{{SearchedBy: match.EcosystemParameters{Package: match.PackageParameter{Name: "django", Version: "3.2"}}}},
+			want:    "3.2",
+			wantOK:  true,
+		},
+		{
+			name:    "cpe details do not: their package version is the cataloged one, not what the search compared against",
+			details: match.Details{{SearchedBy: match.CPEParameters{Package: match.PackageParameter{Name: "openssl", Version: "1.1.1-r2"}}}},
+			wantOK:  false,
+		},
+		{
+			name:    "a blank version is no version",
+			details: match.Details{{SearchedBy: match.DistroParameters{Package: match.PackageParameter{Name: "openssl"}}}},
+			wantOK:  false,
+		},
+		{
+			name: "the first detail to name one answers for the set",
+			details: match.Details{
+				{SearchedBy: match.CPEParameters{Package: match.PackageParameter{Version: "cataloged"}}},
+				{SearchedBy: match.DistroParameters{Package: match.PackageParameter{Version: "searched"}}},
+			},
+			want:   "searched",
+			wantOK: true,
+		},
+		{
+			name:   "no details, no version",
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := searchedPackageVersion(tt.details)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// record builds one hydrated DB record: a single affected range and the fix it names, if any.
+func record(id, namespace, constraint string, fixVersions ...string) vulnerability.Vulnerability {
+	v := vulnerability.Vulnerability{
+		Reference:   vulnerability.Reference{ID: id, Namespace: namespace},
+		PackageName: splitPkg.Name,
+		Constraint:  version.MustGetConstraint(constraint, version.DebFormat),
+	}
+	if len(fixVersions) > 0 {
+		v.Fix = vulnerability.Fix{State: vulnerability.FixStateFixed, Versions: fixVersions}
+	} else {
+		v.Fix = vulnerability.Fix{State: vulnerability.FixStateNotFixed}
+	}
+	return v
+}
+
+// confidenceForNamespace ranks a hand-built record the way the confidence on a real record's match
+// details ranks it: rows from a release channel speak for this build in particular, everything else
+// describes the release the build sits in. A real record's rank is read off the details of the
+// search that found it (see confidenceOf); a namespace is the only handle these fixtures have on
+// the same fact.
+func confidenceForNamespace(namespace string) float64 {
+	if i := strings.LastIndex(namespace, ":"); i >= 0 && strings.Contains(namespace[i:], "+") {
+		return 1.0
+	}
+	return 0.5
+}
+
+// confidenceDetails is the one match detail a fixture record carries: the confidence the search that
+// found it recorded, which is what the split tiers on.
+func confidenceDetails(confidence float64) match.Details {
+	return match.Details{match.StreamDetail(match.DpkgMatcher, "", confidence)}
+}
+
+// setOf puts every record under one entry, the way a single search that turned up several streams'
+// rows for one vulnerability does. Each record's tier is derived from the role its namespace implies
+// by the same function the matchers use, so these fixtures cannot drift from real ranking.
+func setOf(id string, vulns ...vulnerability.Vulnerability) Set {
+	var results []Result
+	for _, v := range vulns {
+		results = append(results, Result{
+			ID:              id,
+			Package:         &splitPkg,
+			Vulnerabilities: []vulnerability.Vulnerability{v},
+			Details:         confidenceDetails(confidenceForNamespace(v.Namespace)),
+		})
+	}
+	return Set{id: results}
+}
+
+func namespacesOf(s Set) []string {
+	var out []string
+	for _, v := range s.Vulnerabilities() {
+		out = append(out, v.Namespace)
+	}
+	return out
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/scylladb/go-set/strset"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -1842,4 +1843,71 @@ func Test_getPackages_perArchFix(t *testing.T) {
 		{name: "rsyslog", arch: "aarch64", fixVers: "0:8.24.0-57.0.4.el7_9.3"},
 		{name: "zlib", arch: "", fixVers: "0:1.2.7-21.el7"},
 	}, results)
+}
+
+// Test_getPackages_unaffectedCarriesModuleQualifier pins that a not-affected row is scoped to the
+// module stream it was published for, the same way an affected row is.
+//
+// CVE-2021-27928 is the real shape: Red Hat publishes both streams under one CVE, mariadb:10.5 as
+// Version "0" (not affected) and mariadb:10.3 with a real fix. Those are distinct groups, so the
+// unaffected handle knows its module -- it just has to write it. Without the qualifier the module
+// is absent from the DB, OnlyQualifiedPackages has nothing to check, and the 10.5 row denies
+// CVE-2021-27928 for a package on the 10.3 stream (a false negative -- see
+// TestRpmNotAffected_DoesNotDenyASiblingStream in grype/matcher/rpm).
+func Test_getPackages_unaffectedCarriesModuleQualifier(t *testing.T) {
+	vuln := unmarshal.OSVulnerability{}
+	vuln.Vulnerability.Name = "CVE-2021-27928"
+	vuln.Vulnerability.NamespaceName = "rhel:8"
+	vuln.Vulnerability.FixedIn = []unmarshal.OSFixedIn{
+		{Name: "mariadb", NamespaceName: "rhel:8", Version: "0", VersionFormat: "rpm", Module: strRef("mariadb:10.5")},
+		{Name: "mariadb", NamespaceName: "rhel:8", Version: "3:10.3.28-1.module+el8.3.0+10472+7adc332a", VersionFormat: "rpm", Module: strRef("mariadb:10.3")},
+	}
+
+	affected, unaffected := getPackages(vuln)
+	require.NotEmpty(t, affected)
+	require.NotEmpty(t, unaffected)
+
+	// rhel:8 is a GA namespace, so both sides are expanded across the major's minor rows. The
+	// module is a property of the group, not of the row, so every row of a side reports the same
+	// one; collapsing to the distinct set keeps the assertion about scoping rather than about how
+	// many minors the expansion happens to produce.
+	modulesOf := func(t *testing.T, blobs []*db.PackageBlob) []string {
+		t.Helper()
+		seen := strset.New()
+		for _, b := range blobs {
+			require.NotNil(t, b.Qualifiers, "rpm row is missing its qualifiers, so nothing scopes it to a stream")
+			require.NotNil(t, b.Qualifiers.RpmModularity)
+			seen.Add(*b.Qualifiers.RpmModularity)
+		}
+		return seen.List()
+	}
+
+	var affectedBlobs, unaffectedBlobs []*db.PackageBlob
+	for _, h := range affected {
+		affectedBlobs = append(affectedBlobs, h.BlobValue)
+	}
+	for _, h := range unaffected {
+		unaffectedBlobs = append(unaffectedBlobs, h.BlobValue)
+	}
+
+	assert.Equal(t, []string{"mariadb:10.3"}, modulesOf(t, affectedBlobs))
+	assert.Equal(t, []string{"mariadb:10.5"}, modulesOf(t, unaffectedBlobs), "the not-affected row must name the stream it speaks for")
+}
+
+// Test_getPackages_unaffectedQualifiersAreRPMOnly pins the other half of getQualifiers: modularity
+// is an rpm concept, so a non-rpm not-affected row carries no qualifiers at all. Here nil means
+// "nothing to scope by", which is correct for dpkg -- unlike the rpm case above, where a nil
+// qualifier silently widened the row to every module.
+func Test_getPackages_unaffectedQualifiersAreRPMOnly(t *testing.T) {
+	vuln := unmarshal.OSVulnerability{}
+	vuln.Vulnerability.Name = "CVE-2024-21892"
+	vuln.Vulnerability.NamespaceName = "debian:11"
+	vuln.Vulnerability.FixedIn = []unmarshal.OSFixedIn{
+		{Name: "nodejs", NamespaceName: "debian:11", Version: "0", VersionFormat: "dpkg"},
+	}
+
+	affected, unaffected := getPackages(vuln)
+	require.Empty(t, affected)
+	require.Len(t, unaffected, 1)
+	assert.Nil(t, unaffected[0].BlobValue.Qualifiers)
 }

@@ -60,6 +60,37 @@ func Transform(vulnerability unmarshal.OSVulnerability, state provider.State) ([
 	return transformers.NewEntries(in...), nil
 }
 
+// getQualifiers is what scopes a group's rows to the packages the group actually speaks for.
+// We only care about a single qualifier: rpm modules. The important thing to note about this is
+// that a package with no module vs a package with a module should be detectable in the DB.
+//
+// Every row a group produces needs this, affected and unaffected alike. A group is keyed on its
+// module (see groupIndex), so the two sides of a multi-stream advisory -- mariadb:10.5 declared
+// not affected, mariadb:10.3 fixed by an RHSA -- are distinct groups. Leave the qualifier off the
+// unaffected row and the module is gone from the DB entirely: OnlyQualifiedPackages then has
+// nothing to check, rpmmodularity.Satisfied is never consulted, and one stream's "not affected"
+// answers for a package in every other stream.
+func getQualifiers(group groupIndex) *db.PackageQualifiers {
+	if group.format != "rpm" {
+		return nil
+	}
+	module := "" // means the target package must have no module (where as nil means the module has no sway on matching)
+	if group.hasModule {
+		module = group.module
+	}
+	qualifiers := &db.PackageQualifiers{
+		RpmModularity: &module,
+	}
+	// when the advisory scoped this fix to a specific architecture, carry it so the
+	// architecture qualifier only applies the fix to packages of that arch (see
+	// pkg/qualifier/architecture). Absent arch means the fix applies to all arches.
+	if group.arch != "" {
+		arch := group.arch
+		qualifiers.Architecture = &arch
+	}
+	return qualifiers
+}
+
 func isNotAffectedGroup(fixedIns []unmarshal.OSFixedIn) bool {
 	for _, f := range fixedIns {
 		if versionutil.CleanFixedInVersion(f.Version) != "0" {
@@ -74,6 +105,8 @@ func getPackages(vuln unmarshal.OSVulnerability) ([]db.AffectedPackageHandle, []
 	var unafs []db.UnaffectedPackageHandle
 	groups := groupFixedIns(vuln)
 	for group, fixedIns := range groups {
+		qualifiers := getQualifiers(group)
+
 		// APK providers already handle not-affected signaling in their own matching layer,
 		// so skip emitting unaffected package handles for them.
 		pkgType := getPackageType(group.osName)
@@ -84,28 +117,8 @@ func getPackages(vuln unmarshal.OSVulnerability) ([]db.AffectedPackageHandle, []
 			// resolves to a per-minor affected row while the lone major-only unaffected
 			// handle is never consulted (grype returns the most-specific OS row and does
 			// not union the major row back in), leaking a false positive.
-			unafs = append(unafs, expandUnaffectedHandles(vuln, group, fixedIns)...)
+			unafs = append(unafs, expandUnaffectedHandles(vuln, group, fixedIns, qualifiers)...)
 			continue
-		}
-
-		// we only care about a single qualifier: rpm modules. The important thing to note about this is that
-		// a package with no module vs a package with a module should be detectable in the DB.
-		var qualifiers *db.PackageQualifiers
-		if group.format == "rpm" {
-			module := "" // means the target package must have no module (where as nil means the module has no sway on matching)
-			if group.hasModule {
-				module = group.module
-			}
-			qualifiers = &db.PackageQualifiers{
-				RpmModularity: &module,
-			}
-			// when the advisory scoped this fix to a specific architecture, carry it so the
-			// architecture qualifier only applies the fix to packages of that arch (see
-			// pkg/qualifier/architecture). Absent arch means the fix applies to all arches.
-			if group.arch != "" {
-				arch := group.arch
-				qualifiers.Architecture = &arch
-			}
 		}
 
 		// SERVER-SIDE stream-affinity expansion: for RHEL GA groups, emit one
@@ -270,13 +283,18 @@ func expandRHELMinorRows(vuln unmarshal.OSVulnerability, group groupIndex, fixed
 // suppressing handle; without this the expanded affected rows would match a minored host
 // while the major-only unaffected handle is never consulted (a false positive). For all
 // other groups it returns the single major-scoped handle (unchanged behavior).
-func expandUnaffectedHandles(vuln unmarshal.OSVulnerability, group groupIndex, fixedIns []unmarshal.OSFixedIn) []db.UnaffectedPackageHandle {
+//
+// The handle carries the group's qualifiers for the same reason the affected rows do: a
+// not-affected row is a claim about one module stream, and without the qualifier it denies for
+// every stream (see getQualifiers).
+func expandUnaffectedHandles(vuln unmarshal.OSVulnerability, group groupIndex, fixedIns []unmarshal.OSFixedIn, qualifiers *db.PackageQualifiers) []db.UnaffectedPackageHandle {
 	mk := func(os *db.OperatingSystem) db.UnaffectedPackageHandle {
 		return db.UnaffectedPackageHandle{
 			OperatingSystem: os,
 			Package:         getPackage(group),
 			BlobValue: &db.PackageBlob{
-				CVEs: getAliases(vuln),
+				CVEs:       getAliases(vuln),
+				Qualifiers: qualifiers,
 				Ranges: []db.Range{
 					{
 						Version: db.Version{Type: fixedIns[0].VersionFormat, Constraint: ""},
@@ -522,8 +540,7 @@ func groupFixedIns(vuln unmarshal.OSVulnerability) map[groupIndex][]unmarshal.OS
 }
 
 func getPackageType(osName string) pkg.Type {
-	// vendor-curated derivatives reuse the base distro's packaging ecosystem
-	// (e.g. rapidfort-ubuntu -> ubuntu -> deb)
+	// rapidfort distros use the base distro's packaging
 	osName = strings.TrimPrefix(osName, "rapidfort-")
 
 	switch osName {

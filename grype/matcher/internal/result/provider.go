@@ -60,7 +60,7 @@ func (p provider) FindResults(criteria ...vulnerability.Criteria) (Set, error) {
 
 				details := detailProvider(p.matcher, p.catalogedPkg, s.criteria, v)
 				if s.confidence > 0 {
-					details = append(details, match.ConfidenceDetail(p.matcher, s.stream, s.confidence))
+					details = append(details, match.StreamDetail(p.matcher, s.stream, s.confidence))
 				}
 
 				newResult := Result{
@@ -246,6 +246,10 @@ func buildMatchDetails(
 
 	// add distro match details
 	for _, distroParam := range distroParams {
+		confidence := 0.95 // TODO: these are hard coded for now
+		if distroMatchType == match.ExactDirectMatch {
+			confidence = 1.
+		}
 		details = append(details, match.Detail{
 			Type:       distroMatchType,
 			Matcher:    matcher,
@@ -254,7 +258,7 @@ func buildMatchDetails(
 				VulnerabilityID:   vuln.ID,
 				VersionConstraint: constraintStr,
 			},
-			Confidence: 1.0, // TODO: this is hard coded for now
+			Confidence: confidence,
 		})
 	}
 

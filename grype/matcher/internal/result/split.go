@@ -1,12 +1,14 @@
 package result
 
 import (
-	"sort"
+	"slices"
 
+	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/search"
 	"github.com/anchore/grype/grype/version"
 	"github.com/anchore/grype/grype/vulnerability"
+	"github.com/anchore/grype/internal/log"
 )
 
 // SplitVulnerable partitions the set into the records that say the searched version is vulnerable
@@ -38,42 +40,73 @@ import (
 // v is the version to test against for records that do not name their own; see searchedVersion for
 // the ones that do.
 func (s Set) SplitVulnerable(v *version.Version) (vulnerable, notVulnerable Set) {
-	affected, unaffected := s.partitionUnaffected()
+	affected, unaffected := splitUnaffected(s)
 
-	// the records the provider calls unaffected can only deny, never report: each is the vendor
-	// stating a vulnerability does not apply. They are not ranked against the streams either --
-	// "not affected" is not a claim about one release line, so the most specific stream does not
-	// overrule it. One whose ranges do not cover this version denies nothing (e.g. the apk "< 0"
-	// NAK, satisfied by no version at all) and reaches callers through the not-vulnerable leg
-	denials := unaffected.atVersion(v, vulnerableAtVersion)
+	// constrain unaffected to those matching the provided version
+	unaffected = filterByVersion(unaffected, v, matchesConstraints)
 
-	candidates := Set{}
-	for id, results := range affected {
-		if kept := mostSpecificVulnerable(id, results, v); len(kept) > 0 {
-			candidates[id] = kept
-		}
+	// consider exact fix version matches to be strong evidence of unaffected
+	unaffected = unaffected.Merge(keepByExactFixVersion(affected, v))
+
+	// find all records matching the version constraint
+	candidates := filterByVersion(affected, v, matchesConstraints)
+
+	// keep records from other namespaces -- this is due to the way records are stored in the db:
+	// we might have 2 or more vulnerability objects each with their own range and by matching one in a namespace,
+	// we should ignore the others
+	notVulnerable = affected.Filter(removeExactVulnerabilitiesByNamespace(candidates))
+
+	if v != nil {
+		// ensure the version all not vulnerable records fall inside the constraints
+		notVulnerable = filterByVersion(notVulnerable, v, outsideConstraints)
+
+		// only keep fixes
+		notVulnerable = notVulnerable.Filter(search.ByFixedVersion(*v))
 	}
 
-	// denial is by vulnerability identity rather than by entry: a provider that keys its naks by its
-	// own IDs (rootio) carries the CVE as an alias, so the nak and the disclosure it answers arrive
-	// under different entries and only identity connects them
-	vulnerable = candidates.Remove(denials)
-	for id := range candidates {
-		if _, kept := vulnerable[id]; !kept {
-			vulnerability.LogDropped(id, "SplitVulnerable", "the provider reports this package unaffected at this version", nil)
-		}
-	}
+	// remove records where we have a more specific result indicating the version is not vulnerable
+	candidates = keepMoreSpecificCandidates(candidates, notVulnerable)
+
+	// remove explicitly unaffected records
+	vulnerable = candidates.Remove(unaffected)
 
 	// An unaffected record whose ranges do not cover this version is left out of both legs: it is a
 	// statement about other builds, and callers reconcile other sources against the not-vulnerable
 	// leg, so letting it through would suppress a finding the provider never answered.
-	return vulnerable, affected.Remove(vulnerable).Merge(denials)
+	return vulnerable, removeSame(affected, vulnerable).Merge(unaffected)
 }
 
-// vulnerableAtVersion is the criteria testing a record's affected range against the searched
+func keepByExactFixVersion(affected Set, v *version.Version) Set {
+	if v == nil || v.Raw == "" {
+		return Set{}
+	}
+	return affected.Filter(search.ByFunc(func(vuln vulnerability.Vulnerability) (bool, string, error) {
+		matches := slices.Contains(vuln.Fix.Versions, v.Raw)
+		if matches {
+			return true, "", nil
+		}
+		return false, "does not have exact fix version", nil
+	}))
+}
+
+func removeExactVulnerabilitiesByNamespace(candidates Set) vulnerability.Criteria {
+	return search.ByFunc(func(incoming vulnerability.Vulnerability) (bool, string, error) {
+		vulnerable := candidates[incoming.ID]
+		for _, v := range vulnerable {
+			for _, v := range v.Vulnerabilities {
+				if v.ID == incoming.ID && v.Namespace == incoming.Namespace {
+					return false, "same vulnerability ID", nil
+				}
+			}
+		}
+		return true, "", nil // keep, this is a unique namespace for the record
+	})
+}
+
+// matchesConstraints is the criteria testing a record's affected range against the searched
 // version. A search made without a version cannot rule anything out, so every record stays a
 // candidate.
-func vulnerableAtVersion(v *version.Version) vulnerability.Criteria {
+func matchesConstraints(v *version.Version) vulnerability.Criteria {
 	if v == nil || v.Raw == "" {
 		return search.ByFunc(func(vulnerability.Vulnerability) (bool, string, error) {
 			return true, "", nil
@@ -82,42 +115,113 @@ func vulnerableAtVersion(v *version.Version) vulnerability.Criteria {
 	return search.ByVersion(*v)
 }
 
-// fixedAtVersion is the criteria testing a record's fix against the searched version. A search made
-// without a version cannot find anything fixed at it, so no record matches.
-func fixedAtVersion(v *version.Version) vulnerability.Criteria {
+// outsideConstraints indicates the vulnerability explicitly falls outside the vulnerable constraint range
+func outsideConstraints(v *version.Version) vulnerability.Criteria {
 	if v == nil || v.Raw == "" {
 		return search.ByFunc(func(vulnerability.Vulnerability) (bool, string, error) {
-			return false, "no version to compare a fix against", nil
+			return false, "", nil
 		})
 	}
-	return search.ByFixedVersion(*v)
+	return search.ByFunc(func(vuln vulnerability.Vulnerability) (bool, string, error) {
+		matches, err := vuln.Constraint.Satisfied(v)
+		if err != nil {
+			return false, err.Error(), err
+		}
+		return !matches, "", nil
+	})
 }
 
-// mostSpecificVulnerable returns the vulnerable records of the most specific stream that has an
-// answer for this version, or nothing when that answer is that the version is not vulnerable. It is
-// given only the provider's affected records; the unaffected ones are handled by denials.
-func mostSpecificVulnerable(id string, results []Result, v *version.Version) []Result {
-	for _, tier := range tiers(results) {
-		vulnerable := atVersion(id, tier.results, v, vulnerableAtVersion)
-		if len(vulnerable) > 0 {
-			return vulnerable
+//nolint:gocognit
+func removeSame(s Set, removals Set) Set {
+	// collect all incoming identifiers into one unified set
+	incomingConfidenceScores := map[string]float64{}
+	for id, results := range removals {
+		confidence := 0.
+		for _, result := range results {
+			c := confidenceOf(result)
+			if c > confidence {
+				confidence = c
+			}
+			incomingConfidenceScores[id] = c
+			for _, v := range result.Vulnerabilities {
+				for _, alias := range v.RelatedVulnerabilities {
+					if incomingConfidenceScores[alias.ID] < c {
+						incomingConfidenceScores[alias.ID] = c
+					}
+				}
+			}
 		}
-		if len(atVersion(id, tier.results, v, fixedAtVersion)) > 0 {
-			// this stream has an answer and it is that the version is past its fix; less specific
-			// streams describe builds this package is not, so they do not get to override it
-			vulnerability.LogDropped(id, "SplitVulnerable", "the most specific stream describing this package reports the version fixed", nil)
-			return nil
-		}
-		// this stream's ranges do not cover this version -- it is describing some other release
-		// line and has nothing to say here, so ask the next one down
 	}
-	return nil
+
+	// keep only entries whose identities don't overlap with incoming
+	out := Set{}
+	for id, results := range s {
+		incomingConfidence, ok := incomingConfidenceScores[id]
+		if ok {
+			// non-alias match for the whole set
+			continue
+		}
+		// match each individual result's alias set against the incoming set's id and aliases
+		results = slices.DeleteFunc(results, func(r Result) bool {
+			c := confidenceOf(r)
+			for _, v := range r.Vulnerabilities {
+				for _, alias := range v.RelatedVulnerabilities {
+					incomingAliasConfidence := incomingConfidenceScores[alias.ID]
+					if c < incomingConfidence || c < incomingAliasConfidence {
+						return true
+					}
+				}
+			}
+			return false
+		})
+		if len(results) == 0 {
+			continue
+		}
+		out[id] = results
+	}
+	return out
 }
 
-// partitionUnaffected splits the set into the provider's affected records and its unaffected ones.
-// A single Result can hold both, since one search returns whatever the stores hold for the
-// vulnerability, so the split is over the vulnerabilities rather than over the results.
-func (s Set) partitionUnaffected() (affected, unaffected Set) {
+// keepMoreSpecificCandidates returns a vulnerability criteria where we remove only vulnerabilities when there
+// is more specific evidence in the notVulnerable set
+func keepMoreSpecificCandidates(candidates, notVulnerable Set) Set {
+	out := Set{}
+	for id, results := range candidates {
+		maxConfidence := 0.
+		// remove all results with lower confidence than the most specific result
+		results = slices.DeleteFunc(results, func(candidate Result) bool {
+			candidateConfidence := confidenceOf(candidate)
+			if candidateConfidence > maxConfidence {
+				maxConfidence = candidateConfidence
+			}
+			// if the candidate has lower confidence than a nak, drop it
+			for _, nak := range notVulnerable[id] {
+				nakConfidence := confidenceOf(nak)
+				if candidateConfidence < nakConfidence {
+					vulnerability.LogDropped(id, "SplitVulnerable", "the most specific stream describing this package reports the version fixed", nil)
+					return true
+				}
+			}
+
+			return false
+		})
+
+		// FIXME: we should merge the vulnerability result together and keep all the match details, but for now we just keep the highest confidence matches
+		results = slices.DeleteFunc(results, func(candidate Result) bool {
+			return confidenceOf(candidate) < maxConfidence
+		})
+
+		if len(results) > 0 {
+			out[id] = results
+		} else {
+			log.WithFields("id", id).Warn("dropping id due to less specific filtering")
+		}
+	}
+	return out
+}
+
+// splitUnaffected splits the set into vulnerability claims vs. unaffected / NAK records
+func splitUnaffected(s Set) (affected, unaffected Set) {
 	affected, unaffected = Set{}, Set{}
 	for id, results := range s {
 		for _, r := range results {
@@ -131,17 +235,6 @@ func (s Set) partitionUnaffected() (affected, unaffected Set) {
 		}
 	}
 	return affected, unaffected
-}
-
-// atVersion keeps the entries whose records match a version-dependent criteria.
-func (s Set) atVersion(v *version.Version, criteria func(*version.Version) vulnerability.Criteria) Set {
-	out := Set{}
-	for id, results := range s {
-		if kept := atVersion(id, results, v, criteria); len(kept) > 0 {
-			out[id] = kept
-		}
-	}
-	return out
 }
 
 func splitVulns(vulns []vulnerability.Vulnerability) (affected, unaffected []vulnerability.Vulnerability) {
@@ -163,58 +256,37 @@ func withVulns(r Result, vulns []vulnerability.Vulnerability) Result {
 	return out
 }
 
-// tier is one stream's records for a single vulnerability.
-type tier struct {
-	confidence float64
-	results    []Result
-}
-
-// tiers groups the records by the confidence of the search that found them, most confident first.
-// Ties keep their first-seen order, so the returned matches and their details are stable across
-// runs.
-func tiers(results []Result) []tier {
-	var out []tier
-	index := make(map[float64]int)
-
-	for _, r := range results {
-		c := confidenceOf(r)
-		i, ok := index[c]
-		if !ok {
-			index[c] = len(out)
-			out = append(out, tier{confidence: c})
-			i = len(out) - 1
-		}
-		out[i].results = append(out[i].results, r)
-	}
-
-	sort.SliceStable(out, func(i, j int) bool { return out[i].confidence > out[j].confidence })
-	return out
-}
-
-// confidenceOf is how strongly a record's own search speaks for this package, read back off the
-// detail the search recorded it on (see match.Details.SearchConfidence) -- the same way
-// searchedVersion reads the searched version off the details.
-//
-// It is deliberately not read from the confidences of the details that describe the search: those
-// state how certain a match of that shape is (a CPE match is less certain than a distro match) and
-// say nothing about which of several searches for one package found this record.
-//
-// A record whose details record no confidence ranks at zero, so a set where nothing was ranked is
-// one uniform tier -- the same answer the split gives when nothing distinguishes its records.
+// confidenceOf is the maximum confidence level reported by the match details: this is likely to be reported in
+// a match.Stream detail when multiple sources are considered to get results
 func confidenceOf(r Result) float64 {
-	c, _ := r.Details.SearchConfidence()
-	return c
+	maxConfidence := 0.
+	for _, d := range r.Details {
+		// if this is a stream result, use it's confidence directly
+		if _, ok := d.SearchedBy.(match.Stream); ok {
+			return d.Confidence
+		}
+		if d.Confidence > maxConfidence {
+			maxConfidence = d.Confidence
+		}
+	}
+	return maxConfidence
 }
 
-// atVersion keeps the records matching a version-dependent criteria, testing each against the
+// filterByVersion keeps the records matching a version-dependent criteria, testing each against the
 // version its own search was made with (see searchedVersion) and falling back to v for the records
 // that name none. Results are filtered one at a time because those versions can differ within a
 // single tier -- an rpm's source-package records are only commensurate with the epoch-less version
 // they were searched at.
-func atVersion(id string, results []Result, v *version.Version, criteria func(*version.Version) vulnerability.Criteria) []Result {
-	var out []Result
-	for _, r := range results {
-		out = append(out, filterOne(id, r, criteria(searchedVersion(r, v)))...)
+func filterByVersion(s Set, v *version.Version, criteria func(*version.Version) vulnerability.Criteria) Set {
+	out := Set{}
+	for id, results := range s {
+		var row []Result
+		for _, r := range results {
+			row = append(row, filterOne(id, r, criteria(searchedVersion(r, v)))...)
+		}
+		if len(row) > 0 {
+			out[id] = row
+		}
 	}
 	return out
 }
@@ -234,7 +306,7 @@ func atVersion(id string, results []Result, v *version.Version, criteria func(*v
 // Which details record it, and which record the cataloged version instead, is spelled out on
 // match.Details.SearchedPackageVersion.
 func searchedVersion(r Result, v *version.Version) *version.Version {
-	raw, ok := r.Details.SearchedPackageVersion()
+	raw, ok := searchedPackageVersion(r.Details)
 	if !ok || (v != nil && raw == v.Raw) {
 		return v
 	}
@@ -254,4 +326,16 @@ func searchedVersion(r Result, v *version.Version) *version.Version {
 // performs so the searched-by version still lands on the match details.
 func filterOne(id string, r Result, criteria vulnerability.Criteria) []Result {
 	return Set{id: {r}}.Filter(criteria)[id]
+}
+
+func searchedPackageVersion(details match.Details) (string, bool) {
+	for _, detail := range details {
+		switch d := detail.SearchedBy.(type) {
+		case match.DistroParameters:
+			return d.Package.Version, d.Package.Version != ""
+		case match.EcosystemParameters:
+			return d.Package.Version, d.Package.Version != ""
+		}
+	}
+	return "", false
 }

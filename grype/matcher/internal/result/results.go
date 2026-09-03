@@ -51,7 +51,7 @@ func (s Set) ToMatches() []match.Match {
 					// how confidently the search that found this record speaks for the package is
 					// what ranked it during the split; it describes no search of its own, so it is
 					// not evidence to report
-					Details: r.Details.WithoutSearchConfidence(),
+					Details: r.Details.WithoutStreamDetail(),
 				})
 			}
 		}
