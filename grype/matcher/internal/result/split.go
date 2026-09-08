@@ -188,6 +188,9 @@ func keepMoreSpecificCandidates(candidates, notVulnerable Set) Set {
 	out := Set{}
 	for id, results := range candidates {
 		maxConfidence := 0.
+		// keep the match details of every candidate we drop, so the evidence of a less-specific
+		// finding is not lost when it is folded into the more-specific one that survives
+		var droppedDetails match.Details
 		// remove all results with lower confidence than the most specific result
 		results = slices.DeleteFunc(results, func(candidate Result) bool {
 			candidateConfidence := confidenceOf(candidate)
@@ -198,6 +201,7 @@ func keepMoreSpecificCandidates(candidates, notVulnerable Set) Set {
 			for _, nak := range notVulnerable[id] {
 				nakConfidence := confidenceOf(nak)
 				if candidateConfidence < nakConfidence {
+					droppedDetails = append(droppedDetails, candidate.Details...)
 					vulnerability.LogDropped(id, "SplitVulnerable", "the most specific stream describing this package reports the version fixed", nil)
 					return true
 				}
@@ -206,16 +210,32 @@ func keepMoreSpecificCandidates(candidates, notVulnerable Set) Set {
 			return false
 		})
 
-		// FIXME: we should merge the vulnerability result together and keep all the match details, but for now we just keep the highest confidence matches
+		// drop everything below the most specific result, collecting only the dropped candidates'
+		// details -- a kept candidate already carries its own, so folding it back in here would
+		// duplicate it.
+		// TODO: we should keep every individual vulnerability we found as a evidence for a match but this isn't supported in the data model today
 		results = slices.DeleteFunc(results, func(candidate Result) bool {
-			return confidenceOf(candidate) < maxConfidence
+			if confidenceOf(candidate) < maxConfidence {
+				droppedDetails = append(droppedDetails, candidate.Details...)
+				return true
+			}
+			return false
 		})
 
-		if len(results) > 0 {
-			out[id] = results
-		} else {
-			log.WithFields("id", id).Warn("dropping id due to less specific filtering")
+		if len(results) == 0 {
+			log.WithFields("vulnerability", id).Trace("dropping vulnerability due to less specific vulnerable record")
+			continue
 		}
+
+		// attach the dropped evidence to each surviving result. Clone before appending so we never
+		// write through a Details slice shared with the source set; any duplicates are collapsed
+		// later by mergeDetails when the matches are assembled.
+		if len(droppedDetails) > 0 {
+			for i := range results {
+				results[i].Details = append(slices.Clone(results[i].Details), droppedDetails...)
+			}
+		}
+		out[id] = results
 	}
 	return out
 }

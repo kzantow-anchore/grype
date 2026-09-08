@@ -117,9 +117,9 @@ func searchKey(cs []vulnerability.Criteria, distroIdx int) string {
 // searchDimensions locates the criteria a rule can rewrite -- the distro rows read and the name
 // searched -- along with the version the search was made at, which is what a channel template
 // resolves its capture groups from.
-func searchDimensions(cs []vulnerability.Criteria) (distroIdx, nameIdx int, version string) {
+func searchDimensions(criteria []vulnerability.Criteria) (distroIdx, nameIdx int, version string) {
 	distroIdx, nameIdx = -1, -1
-	for i, c := range cs {
+	for i, c := range criteria {
 		switch c := c.(type) {
 		case *search.DistroCriteria:
 			if distroIdx < 0 {
@@ -174,10 +174,6 @@ func overlayDistros(r v6.SearchRule, cs []vulnerability.Criteria, distroIdx int,
 		overlay := d
 		overlay.Channels = nil
 		if r.ReplacementDistroName != nil {
-			// the replacement is an OS id, which is not always the distro name it resolves to ("ol"
-			// names oraclelinux), so it is normalized the way a detected distro would be. The
-			// codename is dropped: it is the base vendor's release label, and another vendor's OS
-			// records are version-keyed with no codename of their own.
 			overlay = *distro.New(distro.TypeFromID(*r.ReplacementDistroName), d.Version, "")
 		}
 		if channel != "" {
