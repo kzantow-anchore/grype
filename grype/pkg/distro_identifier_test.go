@@ -14,8 +14,7 @@ import (
 )
 
 func TestApplyDistroIdentifiers(t *testing.T) {
-	// newSBOM builds an SBOM shaped the way syft would report it: an image source with config
-	// labels, and a file catalog holding whatever marker paths a file cataloger recorded.
+	// newSBOM builds an SBOM with an image source carrying labels and a file catalog of the given paths
 	newSBOM := func(src source.Description, paths ...string) *sbom.SBOM {
 		fileMetadata := make(map[file.Coordinates]file.Metadata)
 		for _, p := range paths {
@@ -119,8 +118,7 @@ func TestApplyDistroIdentifiers(t *testing.T) {
 				require.NotNil(t, got)
 				assert.Equal(t, distro.RapidFortUbuntu, got.Type)
 				assert.Equal(t, "20.04", got.Version)
-				// the codename must be dropped: identified OS records carry no codenames, and a
-				// codename on the distro adds an OS row filter that would yield zero rows
+				// identified OS records carry no codename; one on the distro would match zero rows
 				assert.Empty(t, got.Codename)
 			},
 		},

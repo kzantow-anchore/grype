@@ -103,45 +103,43 @@ func KnownOperatingSystemSpecifierOverrides() []OperatingSystemSpecifierOverride
 	}
 }
 
-// KnownSearchRules state how individual packages are searched: which OS rows are queried for them,
-// which additional names, and which packages a vendor's own data fully describes.
-// Patterns are fully anchored when compiled (^ pattern $), so need explicit wildcards `.*`.
+// KnownSearchRules are the built-in search rules: which OS rows, channels and additional names a
+// package is searched with (see SearchRule). Patterns are anchored when compiled (^pattern$), so
+// partial matches need an explicit `.*`; replacements reference named groups as ${name}.
 func KnownSearchRules() []SearchRule {
 	return []SearchRule{
-		// rapidfort: route foreign release streams (fcNN, rf) to channels; native el/ubuntu is channel-less
+		// rapidfort-redhat: .rf versions search the rf channel; native elN versions are channel-less
 		{MatchDistroName: "rapidfort-redhat", MatchPackageVersion: `.*\.rf(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 
-		// rapidfort ubuntu debian have their own patched rapidfort release stream
+		// rapidfort dpkg rebuilds search the rf channel. There is no rf- name rule for dpkg: rf- names
+		// appear in both streams, so only the version decides
 		{MatchDistroName: "rapidfort-ubuntu", MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 		{MatchDistroName: "rapidfort-debian", MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
-		// no rf- name rule for dpkg: an unmarked version is the native stream, and rf- names appear
-		// in both streams, so routing by name alone would answer a stock build with a rebuild's fix
 
-		// lazy wildcard so $1 binds the first dist tag (`1.2-3.fc31.fc43` -> fc31)
-		{MatchDistroName: "rapidfort-redhat", MatchPackageVersion: `.*?\.fc(\d+)(?:[._~-].*)?`, ReplacementChannel: ptr("fc$1"), Priority: priorityRapidFortDistTag},
+		// lazy wildcard so the group binds the first dist tag (`1.2-3.fc31.fc43` -> fc31)
+		{MatchDistroName: "rapidfort-redhat", MatchPackageVersion: `.*?\.fc(?P<fedora>\d+)(?:[._~-].*)?`, ReplacementChannel: ptr("fc${fedora}"), Priority: priorityRapidFortDistTag},
 
-		// rf- name is a fallback; elN has no rule to outrank it, so exclude it here
+		// rf- name fallback; elN versions have no rule to outrank it, so they are excluded here
 		{MatchDistroName: "rapidfort-redhat", MatchPackageName: `rf-.*`, ExcludePackageVersion: `.*\.el\d+(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortNameMarker},
 
-		// rapidfort curates complete alpine data: its own OS rows are the whole picture, disclosures
-		// as well as fixes, so there is no NVD/CPE fallback to make beneath them. The rule
-		// substitutes nothing — that a rule speaks for the package at all is the whole statement.
-		{MatchDistroName: "rapidfort-alpine"},
+		// rapidfort-alpine data carries disclosures and fixes, so apk packages are not searched in the
+		// OS-less (NVD) partition; a rule with no substitution states this
+		{MatchDistroName: "rapidfort-alpine", MatchEcosystem: "apk"},
 
-		// echo-patched debian packages; echo publishes only fixes, so debian data is still searched
+		// echo-patched debian packages also search echo; echo publishes only fixes, so debian data is
+		// still searched
 		{MatchEcosystem: "deb", MatchPackageVersion: `.*[.-]echo.*`, ReplacementDistroName: ptr("echo")},
 	}
 }
 
 // a version marker names the stream a package was built in, so it outranks the rf- name prefix,
-// which only says which advisory file the package appears in.
+// which only names the advisory file the package appears in
 const (
 	priorityRapidFortRebuildMarker = 30
 	priorityRapidFortDistTag       = 20
 	priorityRapidFortNameMarker    = 10
 
-	// one naming scheme across both dpkg base distros (`rfubu` appears on debian rebuilds too).
-	// `~` is dpkg's pre-release marker, terminating the tag in e.g. `1.2-4rfdebian~rf.1`.
+	// `rfubu` appears on debian rebuilds too; `~` is dpkg's pre-release marker (e.g. `1.2-4rfdebian~rf.1`)
 	rapidfortDpkgRebuildMarker = `.*(?:rfubu|rfdeb).*|.*[.+~-]rf(?:[._].*)?`
 )
 

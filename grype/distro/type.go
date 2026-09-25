@@ -39,9 +39,8 @@ const (
 	PostmarketOS Type = "postmarketos"
 	Hummingbird  Type = "hummingbird"
 
-	// RapidFort curated images are derivatives of a base distro (ubuntu, alpine, debian, or rhel) whose
-	// vulnerability data is published under a distinct OS identity. These types are never detected from
-	// /etc/os-release; they are applied via source-metadata distro identifiers (see Identifier).
+	// RapidFort curated images derive from a base distro but publish vulnerability data under their
+	// own OS name. These types are never read from /etc/os-release; they are applied by Identifier.
 	RapidFortUbuntu Type = "rapidfort-ubuntu"
 	RapidFortAlpine Type = "rapidfort-alpine"
 	RapidFortDebian Type = "rapidfort-debian"
@@ -120,8 +119,7 @@ var IDMapping = map[string]Type{
 	"rapidfort-redhat": RapidFortRedHat,
 }
 
-// TypeFromID returns the distro Type for an os-release-style ID (e.g. "ubuntu"), falling back
-// to treating the raw ID as a Type when it is not a known mapping.
+// TypeFromID returns the Type for an os-release ID (e.g. "ubuntu"), or the raw ID as a Type when unknown.
 func TypeFromID(id string) Type {
 	if t, ok := IDMapping[id]; ok {
 		return t

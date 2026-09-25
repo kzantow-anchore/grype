@@ -133,10 +133,7 @@ func mergeESMAdvisoriesIntoMainDisclosures(v *version.Version) func(disclosures,
 
 // mergeESMAdvisoryIntoMainDisclosure processes a single disclosure Result against its corresponding advisory overlay Results.
 func mergeESMAdvisoryIntoMainDisclosure(v *version.Version, disclosures result.Result, advisoryOverlays []result.Result) result.Result {
-	processedResult := result.Result{
-		ID:      disclosures.ID,
-		Package: disclosures.Package,
-	}
+	processedResult := disclosures.Derive()
 
 	for _, disclosure := range disclosures.Vulnerabilities {
 		processedVuln, advisoryDetails := mergeESMAdvisoryIntoSingleDisclosure(v, disclosure, advisoryOverlays)

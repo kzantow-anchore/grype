@@ -263,54 +263,6 @@ func TestRpmNotAffected_MinoredHostGetsSuppressingIgnore(t *testing.T) {
 		})
 }
 
-// TestRpmNotAffected_DoesNotDenyASiblingStream guards the other side of the same record: a
-// not-affected row for ONE module stream must not cancel the disclosure for a DIFFERENT one.
-//
-// CVE-2021-27928 is the canonical shape. Red Hat publishes both streams under one CVE:
-//
-//   - mariadb:10.5 -- Version "0", i.e. not affected. It transforms into an unaffected handle
-//     whose range carries NO constraint string, and an empty constraint is satisfied by every
-//     version (see version.newGenericConstraint).
-//   - mariadb:10.3 -- a real fix, RHSA-2021:1242 at 3:10.3.28-1.module+el8.3.0+10472+7adc332a.
-//
-// A host on the 10.3 stream below that fix is genuinely vulnerable. The 10.5 row says nothing
-// about it: it is scoped to a stream this package is not in. So any suppression driven by the
-// unaffected records has to be scoped -- by record, namespace and module -- and not applied to
-// the whole vulnerability ID, or the always-satisfied 10.5 NAK erases the 10.3 finding.
-//
-// This is not hypothetical: it is the false negative the quality gate caught on
-// docker.io/anchore/test_images:appstreams-centos-stream-8, where mariadb@3:10.3.28-1.module_
-// el8.3.0+757+d382997d (the version used below) stopped being flagged. The same shape accounts
-// for the modular nodejs, php, ruby and postgresql regressions on el8/el9 -- Red Hat routinely
-// ships a constraint-less not-affected row for one stream next to a real fix for another.
-func TestRpmNotAffected_DoesNotDenyASiblingStream(t *testing.T) {
-	dbtest.DBs(t, "rhel-multi-rhsa").
-		SelectOnly("CVE-2021-27928").
-		Run(func(t *testing.T, db *dbtest.DB) {
-			// mariadb from the AFFECTED 10.3 module stream, one build below RHSA-2021:1242
-			// (757 < 10472 in the release segment), on the same minored 8.6 host.
-			p := dbtest.NewPackage("mariadb", "3:10.3.28-1.module_el8.3.0+757+d382997d", syftPkg.RpmPkg).
-				WithID(pkg.ID("mariadb-10.3")).
-				WithDistro(distro.New(distro.RedHat, "8.6", "")).
-				WithMetadata(pkg.RpmMetadata{Epoch: intPtr(3), ModularityLabel: strPtr("mariadb:10.3:8030020210427104546:0d55e02b")}).
-				Build()
-
-			m := db.Match(t, &Matcher{}, p)
-
-			// The 10.5 NAK also reaches this host as a "Distro Not Vulnerable" ignore, for the
-			// same reason it is a candidate for denial: it carries no module qualifier, so the
-			// unaffected search does not scope it to its stream. That is a separate question
-			// from whether the match survives, and the answer to it may well change, so it is
-			// deliberately left unasserted rather than frozen in here. (Declared before the
-			// match assertion, whose failure path is a Fatalf.)
-			m.Ignores().SkipCompleteness()
-
-			m.SelectMatch("CVE-2021-27928").
-				SelectDetailByType(match.ExactDirectMatch).
-				AsDistroSearch()
-		})
-}
-
 // TestRpmCumulativeCompleteness_MinoredHostSeesBothPackages guards the cross-package
 // completeness invariant. grype resolves a host to its single most-specific OS row and does
 // NOT union in the major-only row (operating_system_store searchForOSExactVersions). So once

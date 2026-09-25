@@ -7,8 +7,7 @@ import (
 )
 
 func TestSearchRuleStore_SeededDefaults(t *testing.T) {
-	// setupTestStore opens an empty+writable DB, which seeds InitialData (including the search
-	// rules). The read-back must equal the build-time default rule set.
+	// an empty writable store seeds InitialData, including KnownSearchRules
 	s := setupTestStore(t)
 
 	got, err := s.GetSearchRules()
@@ -18,8 +17,7 @@ func TestSearchRuleStore_SeededDefaults(t *testing.T) {
 }
 
 func TestSearchRuleStore_MissingTableIsNilNotError(t *testing.T) {
-	// a database built before the search_rules table existed has no such table; that must
-	// read as nil (the provider's signal to fall back to built-in defaults), never an error.
+	// a DB built before the table existed reads as nil, not an error
 	s := setupTestStore(t)
 	require.NoError(t, s.db.Migrator().DropTable(&SearchRule{}))
 

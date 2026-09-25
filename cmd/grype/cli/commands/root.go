@@ -492,8 +492,7 @@ func applyDistroHint(hint string) *distro.Distro {
 	return distro.NewFromNameVersion(name, version)
 }
 
-// getDistroIdentifiers starts from the API default identifier rules and overlays the
-// user-configurable options (mirrors getFixChannels).
+// getDistroIdentifiers overlays the CLI options onto the default identifier rules.
 func getDistroIdentifiers(idOpts options.DistroIdentifiers) []distro.Identifier {
 	defaults := distro.DefaultIdentifiers()
 	for i := range defaults {

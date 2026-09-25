@@ -70,7 +70,7 @@ func (m Details) Less(i, j int) bool {
 // compareDetails orders two details strongest-first over every field, so that details comparing equal
 // are the same evidence.
 func compareDetails(a, b Detail) int {
-	if c := compareTypes(a.Type, b.Type); c != 0 {
+	if c := CompareTypes(a.Type, b.Type); c != 0 {
 		return c
 	}
 
@@ -90,8 +90,10 @@ func compareDetails(a, b Detail) int {
 	return comparePayloads(a.Found, b.Found)
 }
 
-// compareTypes orders two match types strongest-first per typeOrder, with unrecognized types last.
-func compareTypes(a, b Type) int {
+// CompareTypes orders two match types strongest-first (direct, indirect, CPE), with unrecognized
+// types last. It is the one ordering of match types: record authority (see compareRecordAuthority)
+// and result ranking (see result.Rank) both use it.
+func CompareTypes(a, b Type) int {
 	if a == b {
 		return 0
 	}
@@ -150,6 +152,17 @@ func comparePayloads(a, b any) int {
 
 func (m Details) Swap(i, j int) {
 	m[i], m[j] = m[j], m[i]
+}
+
+// BestType returns the strongest match type in the set (see CompareTypes), or "" when it is empty.
+func (m Details) BestType() Type {
+	var best Type
+	for _, d := range m {
+		if best == "" || CompareTypes(d.Type, best) < 0 {
+			best = d.Type
+		}
+	}
+	return best
 }
 
 // rank returns the typeOrder position of the best detail in a set, counting from 1, with sets holding

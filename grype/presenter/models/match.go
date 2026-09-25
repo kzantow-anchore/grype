@@ -46,6 +46,15 @@ func newMatch(m match.Match, p pkg.Package, metadataProvider vulnerability.Metad
 		}
 	}
 
+	// RelatedVulnerabilities is sorted by Match.Merge but otherwise in DB order; sort by
+	// (namespace, ID) as mergeReferences does for stable output
+	sort.SliceStable(relatedVulnerabilities, func(i, j int) bool {
+		if relatedVulnerabilities[i].Namespace != relatedVulnerabilities[j].Namespace {
+			return relatedVulnerabilities[i].Namespace < relatedVulnerabilities[j].Namespace
+		}
+		return relatedVulnerabilities[i].ID < relatedVulnerabilities[j].ID
+	})
+
 	// vulnerability.Vulnerability should always have vulnerability.Metadata populated, however, in the case of test mocks
 	// and other edge cases, it may not be populated. In these cases, we should fetch the metadata from the provider.
 	metadata := m.Vulnerability.Metadata
@@ -59,6 +68,10 @@ func newMatch(m match.Match, p pkg.Package, metadataProvider vulnerability.Metad
 
 	format := pkg.VersionFormat(p)
 
+	// report the fix as it applies to this package, not the record's full fix list
+	reported := m.Vulnerability
+	reported.Fix = upgradesFor(m.Vulnerability.Fix, p, format)
+
 	details := make([]MatchDetails, len(m.Details))
 	for idx, d := range m.Details {
 		details[idx] = MatchDetails{
@@ -66,26 +79,90 @@ func newMatch(m match.Match, p pkg.Package, metadataProvider vulnerability.Metad
 			Matcher:    string(d.Matcher),
 			SearchedBy: d.SearchedBy,
 			Found:      d.Found,
-			Fix:        getFix(m, p, format),
+			Fix:        getFix(reported, p, format),
 		}
 	}
 
 	return &Match{
-		Vulnerability:          NewVulnerability(m.Vulnerability, metadata, format),
+		Vulnerability:          NewVulnerability(reported, metadata, format),
 		Artifact:               newPackage(p),
 		RelatedVulnerabilities: relatedVulnerabilities,
 		MatchDetails:           details,
 	}, nil
 }
 
-func getFix(m match.Match, p pkg.Package, format version.Format) *FixDetails {
-	suggested := calculateSuggestedFixedVersion(p, m.Vulnerability.Fix.Versions, format)
+func getFix(vuln vulnerability.Vulnerability, p pkg.Package, format version.Format) *FixDetails {
+	suggested := calculateSuggestedFixedVersion(p, vuln.Fix.Versions, format)
 	if suggested == "" {
 		return nil
 	}
 	return &FixDetails{
 		SuggestedVersion: suggested,
 	}
+}
+
+// upgradesFor narrows a fix to the versions above the installed version. A record's affected ranges
+// are collapsed into one fix list before a match is built, so a sibling range's fix can be at or
+// below the installed version, and reporting it tells the reader to "upgrade" to what they run.
+//
+// This is a reporting concern: matchers read a fix at or below the installed version as "this stream
+// considers the version fixed" when reconciling streams, so it cannot be dropped earlier.
+//
+// An emptied fix list is reported as not-fixed. Versions that cannot be compared are kept.
+func upgradesFor(fix vulnerability.Fix, p pkg.Package, format version.Format) vulnerability.Fix {
+	if len(fix.Versions) == 0 || p.Version == "" {
+		return fix
+	}
+
+	installed := version.New(p.Version, format)
+	if err := installed.Validate(); err != nil {
+		log.WithFields("package", p.Name, "version", p.Version, "error", err).
+			Trace("unable to parse package version; reporting all fix versions")
+		return fix
+	}
+
+	kept := make([]string, 0, len(fix.Versions))
+	keptSet := make(map[string]struct{}, len(fix.Versions))
+	for _, raw := range fix.Versions {
+		if isUpgrade(installed, raw, format, p.Name) {
+			kept = append(kept, raw)
+			keptSet[raw] = struct{}{}
+		}
+	}
+
+	if len(kept) == len(fix.Versions) {
+		return fix
+	}
+
+	out := vulnerability.Fix{Versions: kept, State: fix.State}
+	for _, a := range fix.Available {
+		if _, ok := keptSet[a.Version]; ok {
+			out.Available = append(out.Available, a)
+		}
+	}
+	if len(kept) == 0 && fix.State == vulnerability.FixStateFixed {
+		out.State = vulnerability.FixStateNotFixed
+	}
+	return out
+}
+
+// isUpgrade indicates whether fixVersion is newer than installed. An unparseable or incomparable fix
+// version is treated as an upgrade so it still reaches the report.
+func isUpgrade(installed *version.Version, fixVersion string, format version.Format, pkgName string) bool {
+	fixed := version.New(fixVersion, format)
+	if err := fixed.Validate(); err != nil {
+		log.WithFields("package", pkgName, "fixVersion", fixVersion, "error", err).
+			Trace("unable to parse fix version; reporting it")
+		return true
+	}
+	// installed is the receiver so its comparison config (e.g. missing-epoch strategy) governs
+	cmp, err := installed.Compare(fixed)
+	if err != nil {
+		log.WithFields("package", pkgName, "fixVersion", fixVersion, "error", err).
+			Trace("unable to compare fix version to package version; reporting it")
+		return true
+	}
+	return cmp < 0
 }
 
 func calculateSuggestedFixedVersion(p pkg.Package, fixedVersions []string, format version.Format) string {

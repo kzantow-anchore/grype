@@ -7,9 +7,7 @@ import (
 )
 
 type SearchRuleStoreReader interface {
-	// GetSearchRules returns the search rules (distro/package predicates -> additional search
-	// names and/or a different OS channel or name), used at match time to rewrite the specifiers
-	// an individual package's vulnerability lookup is performed with.
+	// GetSearchRules returns all search rules, or nil when the DB predates the table
 	GetSearchRules() ([]SearchRule, error)
 }
 
@@ -21,10 +19,8 @@ func newSearchRuleStore(db *gorm.DB) *searchRuleStore {
 	return &searchRuleStore{db: db}
 }
 
-// GetSearchRules returns all search rules. Which rules apply to a search is decided by their
-// priority, so the order rows come back in carries no meaning and none is imposed. A database
-// built before this table existed has no such table; that is not an error — nil is returned,
-// which the caller reads as "fall back to the built-in defaults", the same as any empty result.
+// GetSearchRules returns all search rules in no particular order. A DB built before the table existed
+// returns nil, nil, and the caller falls back to KnownSearchRules.
 func (s *searchRuleStore) GetSearchRules() ([]SearchRule, error) {
 	if !s.db.Migrator().HasTable(&SearchRule{}) {
 		return nil, nil

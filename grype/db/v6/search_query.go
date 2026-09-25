@@ -55,6 +55,10 @@ func (b *searchQueryBuilder) ApplyCriteria(criteriaSet []vulnerability.Criteria)
 		case *search.PackageNameCriteria:
 			b.handlePackageName(c)
 			applied = true
+		case *search.IndirectPackageNameCriteria:
+			// a related package's name is searched as any other
+			b.handlePackageName(&c.PackageNameCriteria)
+			applied = true
 		case *search.UnaffectedCriteria:
 			b.handleUnaffected(c)
 			applied = true

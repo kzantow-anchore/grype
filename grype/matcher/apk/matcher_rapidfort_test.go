@@ -11,21 +11,13 @@ import (
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// TestRapidFortAlpine_Matching proves the data-driven completeness policy: rapidfort curates
-// complete vulnerability data (disclosures and fixes) for its alpine stream, so a search rule
-// speaks for rapidfort-alpine packages, and the apk matcher must not fall back to the upstream
-// (NVD/CPE) search it normally runs unconditionally (see includeNVD; alpine secDB reports fixes,
-// not disclosures, so plain alpine relies on that fallback for disclosures).
+// rapidfort-alpine data carries disclosures and fixes, so a search rule excludes the OS-less (NVD)
+// partition from the apk matcher's CPE search (see v6.KnownSearchRules). The fixture carries:
 //
-// The fixture carries:
+//	CVE-2024-2398 / curl: rapidfort-alpine:3.18 fix (8.7.1-r0) and an NVD CPE entry (< 8.7.0)
+//	CVE-2024-2466 / curl: NVD CPE entry only (>= 8.5.0, < 8.8.0)
 //
-//	CVE-2024-2398 / curl: rapidfort-alpine:3.18 fix (8.7.1-r0) AND an NVD CPE entry (< 8.7.0)
-//	CVE-2024-2466 / curl: NVD CPE entry only (>= 8.5.0, < 8.8.0) — no rapidfort record
-//
-// A vulnerable curl on rapidfort-alpine must surface exactly the distro-data finding
-// (CVE-2024-2398, ExactDirectMatch); CVE-2024-2466 must be absent because the only path to it
-// is the suppressed upstream search. The same package under a plain alpine distro is the
-// control: both CVEs surface via the CPE search.
+// On rapidfort-alpine only CVE-2024-2398 surfaces; on plain alpine both do via the CPE search.
 func TestRapidFortAlpine_Matching(t *testing.T) {
 	rfDistro := distro.New(distro.RapidFortAlpine, "3.18", "")
 
@@ -68,8 +60,7 @@ func TestRapidFortAlpine_Matching(t *testing.T) {
 				WithCPE("cpe:2.3:a:haxx:curl:8.7.1:*:*:*:*:*:*:*").
 				Build()
 
-			// no matches; the distro data answers the fixed CVE as a DistroPackageFixed
-			// ignore for overlapping packages
+			// the fixed CVE becomes a DistroPackageFixed ownership ignore
 			findings := db.Match(t, &matcher, p)
 			findings.OnlyHasVulnerabilities()
 			findings.Ignores().

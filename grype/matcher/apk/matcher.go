@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 
-	v6 "github.com/anchore/grype/grype/db/v6"
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/matcher/internal"
 	"github.com/anchore/grype/grype/matcher/internal/result"
@@ -89,9 +88,8 @@ func (m *Matcher) Match(vp vulnerability.Provider, p pkg.Package) ([]match.Match
 // the feed calls unaffected, and apk "< 0" NAKs, which are vulnerable at no version and so land here
 // too. That is what makes it the right thing to reconcile other sources against.
 func (m *Matcher) distroResults(vp vulnerability.Provider, p pkg.Package) (vulnerable, allFixed result.Set, err error) {
-	// the package and its origin packages are split together, so a fix recorded under the origin
-	// name can resolve a disclosure recorded under the package's own name. APK doesn't use epochs,
-	// so pass a nil comparison config.
+	// the package and its origin packages are split together so a fix under the origin name resolves
+	// a disclosure under the package name. APK has no epochs, so no comparison config.
 	return internal.FindResultsByDistroAcrossUpstreams(vp, p, nil, m.Type(), nil)
 }
 
@@ -120,7 +118,7 @@ func (m *Matcher) nakIgnores(vp vulnerability.Provider, p pkg.Package) ([]match.
 		}
 		upstreamNaks, err := provider.FindResults(
 			search.ByDistro(*upstreamPkg.Distro),
-			search.ByPackageName(upstreamPkg.Name),
+			search.ByIndirectPackageName(upstreamPkg.Name),
 			nakConstraint,
 		)
 		if err != nil {
@@ -136,10 +134,6 @@ func (m *Matcher) nakIgnores(vp vulnerability.Provider, p pkg.Package) ([]match.
 // upstream/origin packages, the latter recorded against the SBOM package. Searching the origin is what
 // surfaces, for example, an openssl CVE for a libssl3 APK whose origin is openssl.
 func (m *Matcher) cpeResults(provider vulnerability.Provider, p pkg.Package) (result.Set, []match.IgnoreFilter, error) {
-	if !includeNVD(provider, p) {
-		return nil, nil, nil
-	}
-
 	disclosures, ignores, err := m.cpeDisclosures(provider, p, p)
 	if err != nil {
 		return nil, nil, err
@@ -171,7 +165,7 @@ func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg, cat
 	}
 
 	if searchPkg.Name != catalogPkg.Name {
-		cpeSet = markIndirect(cpeSet, catalogPkg)
+		cpeSet = attributeTo(cpeSet, catalogPkg)
 	}
 
 	if searchPkg.Distro == nil {
@@ -184,27 +178,12 @@ func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg, cat
 	return stripFixState(cpeSet), ignores, nil
 }
 
-// markIndirect records results against the SBOM (catalog) package rather than the upstream package
-// they were searched with, and marks their evidence indirect -- the result.Set equivalent of
-// match.ConvertToIndirectMatches.
-//
-// Both halves are needed. The match type is otherwise derived by comparing the searched package name
-// against the cataloged one, which cannot tell the two apart when a package is its own origin, so the
-// upstream pass says so explicitly.
-func markIndirect(s result.Set, catalogPkg pkg.Package) result.Set {
+// attributeTo records results against the SBOM (catalog) package rather than the upstream package
+// they were searched with. A CPE search carries no package name, so its details are CPE matches
+// whichever package it was made for.
+func attributeTo(s result.Set, catalogPkg pkg.Package) result.Set {
 	return s.Map(func(r *result.Result) {
 		r.Package = &catalogPkg
-
-		// replace the slice rather than mutate in place: Map shallow-copies results, so the Details
-		// backing array is shared with the source set
-		details := make([]match.Detail, len(r.Details))
-		for i, d := range r.Details {
-			if d.Type == match.ExactDirectMatch {
-				d.Type = match.ExactIndirectMatch
-			}
-			details[i] = d
-		}
-		r.Details = details
 	})
 }
 
@@ -219,35 +198,4 @@ func stripFixState(s result.Set) result.Set {
 		}
 		r.Vulnerabilities = vulns
 	})
-}
-
-// includeNVD reports whether the upstream NVD (CPE-indexed) search should be made for this package.
-//
-// Alpine's secDB records fixes without disclosures, which is why an apk match falls back to NVD for
-// the disclosures at all. A vendor that curates its own complete alpine feed -- disclosures as well
-// as fixes -- says so by carrying a search rule for the package (see v6.KnownSearchRules), and for
-// those the NVD search only adds findings the vendor has already answered.
-//
-// A rule can ask for the NVD records back by naming them as its OS -- a non-NULL but empty
-// replacement OS name -- which is how a vendor whose feed carries only fixes keeps the disclosure
-// fallback its packages still need.
-func includeNVD(provider vulnerability.Provider, p pkg.Package) bool {
-	rp, ok := provider.(interface {
-		SearchRules(pkg.Package) []v6.SearchRule
-	})
-	if !ok {
-		return true
-	}
-
-	rules := rp.SearchRules(p)
-	if len(rules) == 0 {
-		return true
-	}
-	for _, r := range rules {
-		// an empty replacement distro name indicates to search the base distro-less record set
-		if r.IsDistrolessSearch() {
-			return true
-		}
-	}
-	return false
 }

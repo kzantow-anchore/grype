@@ -701,86 +701,76 @@ func (os *OperatingSystemSpecifierOverride) BeforeCreate(_ *gorm.DB) (err error)
 	return nil
 }
 
-// SearchRule rewrites the specifiers an individual package's vulnerability lookup is
-// performed with — which names are searched and which OperatingSystem rows (a channel and/or a
-// different OS name) are queried — selected by predicates on the package's distro, ecosystem,
-// name, and version. It is the cross-cutting sibling of PackageSpecifierOverride and
-// OperatingSystemSpecifierOverride: those each normalize one specifier by itself, while a rule
-// here reads both a package and its distro and may rewrite either.
+// SearchRule rewrites how a package is searched: which names are searched and which OperatingSystem
+// rows (a channel and/or a different OS name) are queried, selected by predicates on the search
+// criteria (the searched distro, ecosystem, name and version). Unlike PackageSpecifierOverride and
+// OperatingSystemSpecifierOverride, a rule reads both the package and its distro and may rewrite either.
 //
-// This is how per-package "release streams" within a single OS release are expressed (e.g. an rpm
-// versioned `...fc43` inside a rapidfort-redhat:9 image matches channel "fc43" rather than the
-// native el9 stream), how packages patched by a vendor other than the distro vendor are routed
-// to that vendor's own OS identity (e.g. a deb carrying an `.echo` version marker searches echo
-// in addition to debian, which keeps the two vendors' data separately addressable), and how a
-// vendor rebuild naming scheme can fan the search out across names.
+// For example, an rpm versioned `...fc43` on rapidfort-redhat:9 also searches channel "fc43", and a
+// deb with an `.echo` version marker also searches the "echo" OS. A rule with no substitution states
+// that the matched packages are fully described by OS rows, so the OS-less partition (the CPE-indexed
+// NVD records) is not searched for them.
 //
-// A rule that substitutes nothing is meaningful too: it states that a vendor's own data is the
-// complete picture for the packages it matches, which is what tells a matcher not to fall back to
-// the upstream (NVD/CPE) search it would otherwise make for itself.
+// Replacements are templates over the match patterns' capture groups: `${name}` (or `$name`)
+// references a named group `(?P<name>...)` of any match pattern, and `$N` references group N of the
+// pattern the replacement derives from. A reference that cannot resolve is rejected (see Validate).
 //
-// Of the rows that match a package and that apply to the reading client (see
-// ApplicableClientDBSchemas), only those at the highest Priority are applied; rows tied at that
-// priority all apply together.
+// Of the matching rules applicable to the client (see ApplicableClientDBSchemas), only those at the
+// highest Priority apply. Older clients ignore this table; clients reading a DB without it use
+// KnownSearchRules. Evaluation lives in search_rule.go.
 //
-// Older grype clients never query tables they do not know about, so rows here are invisible to
-// them; clients reading a DB built before this table existed fall back to the built-in defaults
-// (see KnownSearchRules). Evaluation semantics live in search_rule.go.
-//
-// The table has no primary key: rows are never addressed individually (the whole set is read at
-// once and selected by predicate and Priority), and nothing references a rule, so a key would only
-// be a surrogate to carry around.
+// The table has no primary key: rows are read as a whole set and never referenced.
 type SearchRule struct {
-	// MatchDistroName is the distro name this rule applies to, matched (case-insensitively, not as
-	// a pattern) against the distro name used for searching (e.g. "debian", "rapidfort-redhat");
-	// empty applies to any distro, including packages with no distro (language ecosystems)
+	// MatchDistroName is the distro name this rule applies to, compared case-insensitively (not a
+	// pattern) with the searched distro name (e.g. "debian", "rapidfort-redhat"); empty applies to
+	// any distro, including packages with no distro
 	MatchDistroName string `gorm:"column:match_distro_name;index:search_rule_distro_idx,collate:NOCASE"`
 
-	// MatchDistroVersion is an optional regex matched against the distro version string
+	// MatchDistroVersion is an optional regex matched against the distro version (then its label, e.g.
+	// a codename); its named groups may be referenced by any replacement
 	MatchDistroVersion string `gorm:"column:match_distro_version"`
 
-	// MatchEcosystem is an optional package ecosystem to constrain the rule to, matched
-	// (case-insensitively, not as a pattern) against the package type (e.g. "deb", "rpm", "apk")
+	// MatchEcosystem is an optional package type (e.g. "deb", "rpm", "apk"), compared
+	// case-insensitively (not a pattern)
 	MatchEcosystem string `gorm:"column:match_ecosystem;collate:NOCASE;index"`
 
-	// MatchPackageName is a regex matched against each candidate search name; its capture
-	// groups may be referenced by ReplacementPackageName (required when that field is set)
+	// MatchPackageName is a regex matched against the searched name; its groups may be referenced by
+	// ReplacementPackageName ($N or ${name}, and a pattern is required when that field is set) and its
+	// named groups by any replacement
 	MatchPackageName string `gorm:"column:match_package_name"`
 
-	// ExcludePackageName is an optional regex that rejects candidate names
+	// ExcludePackageName is an optional regex that rejects searched names; its groups are not referenceable
 	ExcludePackageName string `gorm:"column:exclude_package_name"`
 
-	// MatchPackageVersion is an optional regex matched against the package version; its capture
-	// groups may be referenced by ReplacementChannel (e.g. `\.fc(\d+)` with channel "fc$1")
+	// MatchPackageVersion is an optional regex matched against the searched version; its groups may be
+	// referenced by ReplacementChannel (e.g. `\.fc(?P<fedora>\d+)` with channel "fc${fedora}", or
+	// `\.fc(\d+)` with "fc$1") and its named groups by any replacement
 	MatchPackageVersion string `gorm:"column:match_package_version"`
 
-	// ExcludePackageVersion is an optional regex that rejects package versions
+	// ExcludePackageVersion is an optional regex that rejects searched versions; its groups are not
+	// referenceable
 	ExcludePackageVersion string `gorm:"column:exclude_package_version"`
 
-	// below are the substitutions that change how a matched package's lookup is performed
-	// (at least one must be set)
+	// the substitutions below may all be unset (see the type doc); a rule that sets any must also
+	// have a package predicate
 
-	// ReplacementChannel is the OS channel to search for matched packages; it may reference
-	// capture groups from MatchPackageVersion using $N syntax. An empty (or empty-expanding)
-	// value resolves to the channel-less rows of the OS.
+	// ReplacementChannel is the OS channel to search for matched packages; $N references
+	// MatchPackageVersion's groups. An empty (or empty-expanding) value selects the channel-less rows
+	// of the OS.
 	ReplacementChannel *string `gorm:"column:replacement_channel"`
 
-	// ReplacementDistroName is a different OS name to search for matched packages. Non-NULL but
-	// empty names the CPE-indexed (NVD) records instead -- the absence of an operating system, not
-	// the absence of a statement about one -- which no store search reaches; it says those records
-	// still count for the matched packages.
+	// ReplacementDistroName is a different OS name to search for matched packages; it may reference
+	// named groups only (e.g. "${vendor}"), and an empty expansion adds no OS. Non-NULL but empty names
+	// the OS-less partition (the CPE-indexed NVD records): no store search is rewritten, the partition
+	// is only kept searched for the matched packages.
 	ReplacementDistroName *string `gorm:"column:replacement_distro_name"`
 
-	// ReplacementPackageName is a name to add to the search list, expanded from MatchPackageName's
-	// capture groups with $N syntax; empty means no name substitution. It adds to the search
-	// rather than replacing a value, which is why it is not named replacement_*.
+	// ReplacementPackageName is a name to search in addition to the original; $N references
+	// MatchPackageName's groups (e.g. `rootio-(?P<upstream>.+)` with "${upstream}"). Empty adds no name.
 	ReplacementPackageName string `gorm:"column:replacement_package_name"`
 
-	// Priority ranks this rule against the other rules matching the same search: only the matching
-	// rules with the highest priority are applied, and rules tied at that priority all apply
-	// together. Unset (0) is the lowest priority. Priority decides which substitution describes a
-	// package, so a rule that substitutes nothing is outside the contest and applies whatever else
-	// matches (see highestPriority).
+	// Priority ranks matching rules: only those at the highest priority apply, and ties all apply.
+	// Unset (0) is lowest. Rules with no substitution are not ranked (see highestPriority).
 	Priority int `gorm:"column:priority;index"`
 
 	// ApplicableClientDBSchemas is a constraint on the database version that this override can be applied to (relative to the client library being used to access the DB).
@@ -788,8 +778,6 @@ type SearchRule struct {
 }
 
 func (o *SearchRule) BeforeCreate(_ *gorm.DB) (err error) {
-	// Validate is the single definition of "legal rule shape", shared with the match-time
-	// compile path so the two can never drift apart
 	return o.Validate()
 }
 

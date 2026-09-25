@@ -22,9 +22,8 @@ func MatchPackageByLanguage(store vulnerability.Provider, p pkg.Package, matcher
 	provider := result.NewProvider(store, p, matcherType)
 	pkgVersion := version.New(p.Version, pkg.VersionFormat(p))
 
-	// Gather every applicable record across every name the provider claims for p, then split once.
-	// Splitting per name would silo a NAK keyed under one name (e.g. `rootio-foo`) away from a
-	// disclosure keyed under another (`foo`).
+	// gather records across every name, then split once: splitting per name would keep a NAK under
+	// one name (e.g. `rootio-foo`) from a disclosure under another (`foo`)
 	applicable := result.Set{}
 	for _, name := range store.PackageSearchNames(p) {
 		found, err := provider.FindAll(
@@ -39,15 +38,14 @@ func MatchPackageByLanguage(store vulnerability.Provider, p pkg.Package, matcher
 		applicable = applicable.Merge(found)
 	}
 
-	disclosures, notVulnerable := applicable.SplitVulnerable(pkgVersion)
+	disclosures, notVulnerable := SplitVulnerable(applicable, pkgVersion)
 
-	// Only the naks become ignore rules: a nak states this package is not affected at all, while
-	// everything else the split set aside is only saying this version is not the vulnerable one --
-	// too weak to suppress the same vulnerability on another package by name and version.
+	// only NAKs become ignore rules: a NAK states the package is not affected, while a fixed record
+	// only states this version is not vulnerable
 	return disclosures.ToMatches(), constructIgnoreFilters(naks(notVulnerable), p), nil
 }
 
-// naks narrows a not-vulnerable set to the provider's explicit unaffected records.
+// naks narrows a set to the provider's explicit unaffected records.
 func naks(s result.Set) result.Set {
 	return s.Filter(search.ForUnaffected())
 }
@@ -74,18 +72,16 @@ func MatchPackageByEcosystemPackageName(vp vulnerability.Provider, p pkg.Package
 		return nil, nil, fmt.Errorf("matcher failed to fetch disclosure language=%q pkg=%q: %w", p.Language, p.Name, err)
 	}
 
-	disclosures, notVulnerable := applicable.SplitVulnerable(pkgVersion)
+	disclosures, notVulnerable := SplitVulnerable(applicable, pkgVersion)
 
-	// only the explicit naks become ignore rules -- see MatchPackageByLanguage
+	// only NAKs become ignore rules (see MatchPackageByLanguage)
 	return disclosures.ToMatches(), constructIgnoreFilters(naks(notVulnerable), p), nil
 }
 
 func constructIgnoreFilters(unaffectedVulns result.Set, p pkg.Package) []match.IgnoreFilter {
 	var ignores []match.IgnoreFilter
 
-	// collect all IDs to exclude. One entry routinely holds several records for the same
-	// vulnerability -- one per affected version window the advisory names -- and each says the same
-	// thing about which IDs to ignore, so the IDs are deduped rather than the rules repeated.
+	// collect all IDs to exclude, deduped: a vulnerability's several version ranges each carry the same IDs
 	var ids []string
 	appendID := func(id string) {
 		if id != "" && !slices.Contains(ids, id) {

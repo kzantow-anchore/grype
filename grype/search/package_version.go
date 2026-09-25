@@ -7,12 +7,10 @@ import (
 
 var _ vulnerability.Criteria = (*PackageVersionCriteria)(nil)
 
-// PackageVersionCriteria conveys the version of the package a search is being performed for
-// WITHOUT constraining the results to ranges that version satisfies — every record matches. Use
-// it when the caller needs records on both sides of the version (both vulnerable and fixed, e.g.
-// to build ignore rules from the fixed set) but the provider still needs the version to resolve
-// where to search (e.g. search rules that route release streams by version
-// markers). To constrain results by version, use ByVersion instead.
+// PackageVersionCriteria conveys the searched package's version without constraining results: every
+// record matches. Use it when the caller needs records on both sides of the version but the provider
+// needs the version to decide where to search (e.g. search rules keyed on version markers). To
+// constrain results by version, use ByVersion.
 type PackageVersionCriteria struct {
 	Version version.Version
 }

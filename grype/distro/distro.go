@@ -84,10 +84,9 @@ func parseVersion(version string) (major, minor, remaining, versionWithoutSuffix
 }
 
 // ParseDistroString parses a user-provided distro string in the format "name<separator>version"
-// where separator can be "-", ":", or "@". Distro IDs that themselves contain a separator
-// (e.g. "opensuse-leap", "rapidfort-ubuntu") are matched against the known ID set first so the
-// separator within the ID is not treated as the name/version split. Returns the distro name and
-// version parts.
+// where separator can be "-", ":", or "@". Known distro IDs that contain a separator (e.g.
+// "opensuse-leap", "rapidfort-ubuntu") are matched first (see splitKnownCompoundID). Returns the
+// distro name and version parts.
 func ParseDistroString(s string) (name, version string) {
 	if s == "" {
 		return "", ""
@@ -95,8 +94,6 @@ func ParseDistroString(s string) (name, version string) {
 
 	s = strings.TrimSpace(s)
 
-	// handle distro IDs that contain a separator character (e.g. "opensuse-leap", "rapidfort-ubuntu"):
-	// the longest matching known ID wins, then split on any separator that follows it
 	if id, remaining, ok := splitKnownCompoundID(s); ok {
 		return id, remaining
 	}
@@ -125,7 +122,7 @@ func isDistroStringSeparator(b byte) bool {
 }
 
 // splitKnownCompoundID checks whether s begins with a known distro ID that itself contains a
-// separator character; if so it returns the ID and whatever follows the next separator.
+// separator; if so it returns the longest such ID and whatever follows the next separator.
 func splitKnownCompoundID(s string) (name, version string, ok bool) {
 	lower := strings.ToLower(s)
 	var match string
@@ -147,8 +144,7 @@ func splitKnownCompoundID(s string) (name, version string, ok bool) {
 	if isDistroStringSeparator(remaining[0]) {
 		return match, strings.TrimSpace(remaining[1:]), true
 	}
-	// the known ID is only a prefix of a longer string with no separator boundary; treat the
-	// whole input as a name (matches the previous opensuse-leap behavior)
+	// a longer name that only begins with the known ID
 	return s, "", true
 }
 

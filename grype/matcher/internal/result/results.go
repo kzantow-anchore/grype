@@ -26,6 +26,17 @@ type Result struct {
 
 	// Package is the package that was used to search for vulnerabilities.
 	Package *pkg.Package
+
+	// Rank is how authoritatively the result speaks for the package when the results for one
+	// vulnerability disagree (see Rank)
+	Rank Rank
+}
+
+// Derive returns a result for the same vulnerability, package and rank, with no vulnerabilities or
+// details yet: for a result rebuilt from r (e.g. an overlay merged into a disclosure), so it keeps r's
+// standing when results disagree.
+func (r Result) Derive() Result {
+	return Result{ID: r.ID, Package: r.Package, Rank: r.Rank}
 }
 
 type Set map[string][]Result
@@ -48,10 +59,7 @@ func (s Set) ToMatches() []match.Match {
 				out.Add(match.Match{
 					Vulnerability: v,
 					Package:       *r.Package,
-					// how confidently the search that found this record speaks for the package is
-					// what ranked it during the split; it describes no search of its own, so it is
-					// not evidence to report
-					Details: r.Details.WithoutStreamDetail(),
+					Details:       r.Details,
 				})
 			}
 		}
@@ -274,30 +282,8 @@ func (s Set) Map(fn func(r *Result)) Set {
 	return out
 }
 
-// MarkIndirect marks every record's evidence as an indirect match.
-//
-// The match type is otherwise derived by comparing the name a record was searched by against the
-// cataloged package's, which cannot tell the two apart when a package is its own upstream -- so the
-// upstream pass says so explicitly rather than relying on the names differing.
-func (s Set) MarkIndirect() Set {
-	return s.Map(func(r *Result) {
-		// replace the slice rather than writing through it: Map's copy is shallow, so mutating in
-		// place would corrupt the source set's backing array
-		details := make([]match.Detail, len(r.Details))
-		for i, d := range r.Details {
-			d.Type = match.ExactIndirectMatch
-			details[i] = d
-		}
-		r.Details = details
-	})
-}
-
-// Filter keeps the records matching every criteria.
-//
-// A version criteria here answers "does any window of this record cover me", which cannot tell a
-// record already fixed at this version from one describing a release line the package is not on,
-// and drops the records that carry that distinction. SplitVulnerable asks the question per window
-// and keeps both legs.
+// Filter keeps the records matching every criteria. A version criteria here cannot distinguish a
+// record fixed at this version from one for another release line; use SplitVulnerable for that.
 func (s Set) Filter(criteria ...vulnerability.Criteria) Set {
 	out := Set{}
 	for id, results := range s {
@@ -319,6 +305,7 @@ func (s Set) Filter(criteria ...vulnerability.Criteria) Set {
 				Vulnerabilities: vulns,
 				Details:         details,
 				Package:         result.Package,
+				Rank:            result.Rank,
 			})
 		}
 

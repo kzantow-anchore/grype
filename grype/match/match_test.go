@@ -481,10 +481,8 @@ func TestMatch_Merge_isOrderIndependentForThreeRecords(t *testing.T) {
 	}
 }
 
-// TestMergeFix_DedupesEpochSpellings pins that two records naming the same build under different
-// spellings produce one upgrade target, not two. Real advisory data spells the same rpm fix both
-// with and without its zero epoch across sibling entries, and a reader shown both has no way to know
-// they are the same thing.
+// Advisory data spells the same rpm fix both with and without its zero epoch; the merged fix must
+// list it once.
 func TestMergeFix_DedupesEpochSpellings(t *testing.T) {
 	fixed := func(versions ...string) vulnerability.Fix {
 		return vulnerability.Fix{State: vulnerability.FixStateFixed, Versions: versions}

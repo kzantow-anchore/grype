@@ -57,8 +57,7 @@ const (
 	//        runtime qualifier in pkg/qualifier/gosymbols matches captured Go binary symbols
 	//        so stdlib and golang.org/x/* advisories don't FP-match binaries that don't use
 	//        vulnerable symbols)
-	// 6.1.10: Add SearchRule table (search_rules): data-defined rules that rewrite the specifiers
-	//        a package's vulnerability lookup is performed with
+	// 6.1.10: Add SearchRule table (search_rules): data-defined rules that rewrite how a package is searched
 )
 
 const (

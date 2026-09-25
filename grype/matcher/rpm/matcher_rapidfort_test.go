@@ -10,19 +10,14 @@ import (
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// The rapidfort-redhat fixture carries curated advisories under the rapidfort-redhat OS name:
-// native el9-stream fixes live in the channel-less rapidfort-redhat:9 namespace, Fedora-stream
-// fixes live in the rapidfort-redhat:9+fc43 channel, and RapidFort-rebuild fixes live in the
-// rapidfort-redhat:9+rf channel. The stock rpm matcher resolves these through the per-package OS
-// routing rules (a .fcNN dist tag adds the matching fc channel; .rf markers add +rf), each of
-// which searches its channel *in addition to* the channel-less rows — so a package built in a
-// foreign stream surfaces both that stream's fix and whatever the native rows carry for it.
+// The rapidfort-redhat fixture holds native el9 fixes in the channel-less rapidfort-redhat:9
+// namespace, Fedora-stream fixes in rapidfort-redhat:9+fc43, and RapidFort-rebuild fixes in
+// rapidfort-redhat:9+rf. Search rules add the fc/rf channel for marked packages, searched in
+// addition to the channel-less rows.
 func TestRapidFortRedHat_Matching(t *testing.T) {
 	rfDistro := distro.New(distro.RapidFortRedHat, "9", "")
 
-	// streamFinding is one expected finding for the test's CVE, identified by the namespace it
-	// was found in — a package routed to a stream channel surfaces one finding per searched
-	// namespace that carries the CVE.
+	// streamFinding is one expected finding for the test's CVE, identified by namespace
 	type streamFinding struct {
 		namespace string
 		fixes     []string
@@ -42,7 +37,6 @@ func TestRapidFortRedHat_Matching(t *testing.T) {
 		expectNone  bool
 	}{
 		{
-			// a native el9 rpm needs no routing rule: the channel-less query IS the native stream
 			name:        "el9 rpm surfaces the native fix",
 			pkgName:     "curl",
 			pkgVersion:  "0:7.76.1-14.el9",
@@ -55,10 +49,7 @@ func TestRapidFortRedHat_Matching(t *testing.T) {
 			},
 		},
 		{
-			// a .fc43 rpm routes to the +fc43 channel and keeps the channel-less rows: its version is
-			// inside both streams' constraints, but the fedora stream is the one that built this
-			// rpm, so its fix is the one that applies and the native row it outranks is not
-			// reported alongside it
+			// both streams cover this version; the fedora stream outranks the native row
 			name:        "fc43 rpm surfaces the fedora-stream fix, not the native one",
 			pkgName:     "curl",
 			pkgVersion:  "7.70.0-1.fc43",
@@ -71,8 +62,7 @@ func TestRapidFortRedHat_Matching(t *testing.T) {
 			},
 		},
 		{
-			// a .rf-versioned rpm routes to the +rf channel via the version-marker rule; the
-			// channel-less rows are searched too but carry nothing for this package
+			// the channel-less rows carry nothing for this package
 			name:        "rf-versioned rpm surfaces the rf-stream fix",
 			pkgName:     "python3",
 			pkgVersion:  "0:3.11.14-1.rf",
@@ -85,8 +75,6 @@ func TestRapidFortRedHat_Matching(t *testing.T) {
 			},
 		},
 		{
-			// an rf-named rpm with no derivable version marker routes to +rf via the name
-			// fallback rule (which runs after all version-marker rules)
 			name:        "rf-named rpm with an unmarked version falls back to the rf channel",
 			pkgName:     "rf-polkit",
 			pkgVersion:  "0:0.117-10",
@@ -99,8 +87,6 @@ func TestRapidFortRedHat_Matching(t *testing.T) {
 			},
 		},
 		{
-			// source-rpm indirection composes with routing: the synthesized upstream package
-			// carries the same el9 version and resolves against the native rows
 			name:        "source-rpm indirection reaches the native fix",
 			pkgName:     "curl-minimal",
 			pkgVersion:  "0:7.76.1-14.el9",
@@ -115,7 +101,6 @@ func TestRapidFortRedHat_Matching(t *testing.T) {
 			},
 		},
 		{
-			// the same package under a plain redhat distro must not reach rapidfort data
 			name:       "plain redhat distro never sees rapidfort rows",
 			pkgName:    "curl",
 			pkgVersion: "0:7.76.1-14.el9",

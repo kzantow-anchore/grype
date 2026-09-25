@@ -11,19 +11,13 @@ import (
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// The rapidfort-ubuntu fixture carries curated advisories under the rapidfort-ubuntu OS name:
-// native ubuntu-stream fixes live in the channel-less rapidfort-ubuntu:20.04 namespace and
-// RapidFort-rebuild fixes live in the rapidfort-ubuntu:20.04+rf channel. The stock dpkg matcher
-// (no rapidfort-specific matcher) resolves these through the source-metadata distro identifier
-// (which produces the rapidfort-ubuntu distro) and the per-package OS routing rules (which add
-// the +rf channel for rf-marked packages, searched alongside the channel-less rows rather than
-// in place of them).
+// The rapidfort-ubuntu fixture holds native ubuntu fixes in the channel-less rapidfort-ubuntu:20.04
+// namespace and RapidFort-rebuild fixes in rapidfort-ubuntu:20.04+rf. Search rules add the rf channel
+// for rf-versioned packages, searched in addition to the channel-less rows.
 func TestRapidFortUbuntu_Matching(t *testing.T) {
 	rfDistro := distro.New(distro.RapidFortUbuntu, "20.04", "")
 
-	// streamFinding is one expected finding for the test's CVE, identified by the namespace it
-	// was found in — a package routed to a stream channel surfaces one finding per searched
-	// namespace that carries the CVE.
+	// streamFinding is one expected finding for the test's CVE, identified by namespace
 	type streamFinding struct {
 		namespace string
 		fixes     []string
@@ -40,7 +34,6 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 		expectNone  bool
 	}{
 		{
-			// native (ubuntu-versioned) package resolves against the channel-less namespace
 			name:        "native package surfaces the native fix",
 			pkgName:     "curl",
 			pkgVersion:  "7.68.0-1ubuntu2.5",
@@ -52,7 +45,6 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 			},
 		},
 		{
-			// the same package under a plain ubuntu distro must not reach rapidfort data
 			name:       "plain ubuntu distro never sees rapidfort rows",
 			pkgName:    "curl",
 			pkgVersion: "7.68.0-1ubuntu2.5",
@@ -60,10 +52,7 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 			expectNone: true,
 		},
 		{
-			// an rf-versioned package adds the +rf channel to the query, and the channel-less rows
-			// are still searched. Both streams describe this build as vulnerable, but they name
-			// different fixes: the rf stream is the one that built this package, so its fix is the
-			// one that applies and the native row it outranks is not reported alongside it
+			// both streams cover this version; the rf stream outranks the native row
 			name:        "rf-versioned package surfaces the rf-stream fix, not the native one",
 			pkgName:     "tar",
 			pkgVersion:  "1.30+dfsg-7rfubu.1",
@@ -75,8 +64,6 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 			},
 		},
 		{
-			// a native-versioned package matches no routing rule, so only the channel-less rows are
-			// searched and the rf-stream fix for the same CVE stays out of the result
 			name:        "native-versioned package surfaces the native fix for a dual-stream CVE",
 			pkgName:     "tar",
 			pkgVersion:  "1.30+dfsg-7",
@@ -88,9 +75,7 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 			},
 		},
 		{
-			// an rf-named package with a stock ubuntu version stays on the native stream (rf-named
-			// advisory files carry native events for stock builds; ubuntu derives streams from
-			// versions only) and matches by exact name
+			// rf-named advisory files carry native events for stock builds; dpkg rules key on version only
 			name:        "rf-named package with a stock version matches the native stream",
 			pkgName:     "rf-wget",
 			pkgVersion:  "1.20.3-1ubuntu2",
@@ -102,7 +87,6 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 			},
 		},
 		{
-			// a rapidfort distro version with no rows in the DB yields zero matches, no error
 			name:       "rapidfort distro with no data yields no matches",
 			pkgName:    "curl",
 			pkgVersion: "7.68.0-1ubuntu2.5",
@@ -136,14 +120,9 @@ func TestRapidFortUbuntu_Matching(t *testing.T) {
 	})
 }
 
-// TestRapidFortUbuntu_StreamFixResolvesNativeDisclosure pins the behavior that keeps a RapidFort
-// rebuild from being reported against a disclosure its own stream has already fixed.
-//
-// CVE-2026-11111 is recorded twice for openssl: the channel-less rapidfort-ubuntu:20.04 rows carry
-// an open-ended `>= 1.1.1-1ubuntu2` affected range with no fix, and the rapidfort-ubuntu:20.04+rf
-// channel carries the rebuild's fix at 1.1.1-3rfubu.1. Both namespaces are searched for an
-// rf-versioned package, so without the resolution step the native row alone would report every
-// rf build as vulnerable no matter how far past the rebuild fix it is.
+// CVE-2026-11111 is recorded twice for openssl: the channel-less rapidfort-ubuntu:20.04 row has an
+// open-ended `>= 1.1.1-1ubuntu2` range with no fix, and the rapidfort-ubuntu:20.04+rf row has the
+// rebuild's fix at 1.1.1-3rfubu.1. The rf row must resolve the native disclosure for rf builds.
 func TestRapidFortUbuntu_StreamFixResolvesNativeDisclosure(t *testing.T) {
 	rfDistro := distro.New(distro.RapidFortUbuntu, "20.04", "")
 
@@ -159,8 +138,7 @@ func TestRapidFortUbuntu_StreamFixResolvesNativeDisclosure(t *testing.T) {
 					WithDistro(rfDistro).
 					Build()
 
-				// no matches; the resolved CVE is carried out as a DistroPackageFixed ignore for
-				// packages this one owns files for, the same as any other already-fixed CVE
+				// the resolved CVE becomes a DistroPackageFixed ownership ignore
 				findings := db.Match(t, matcher, p)
 				findings.OnlyHasVulnerabilities()
 				findings.Ignores().
@@ -168,8 +146,7 @@ func TestRapidFortUbuntu_StreamFixResolvesNativeDisclosure(t *testing.T) {
 					ForPackage(pkgID)
 			})
 
-			// an rf build below the native row's lower bound: the native row has nothing to say about
-			// it, and silence is not a denial -- the rf row does cover it, so the finding stands.
+			// an rf build below the native row's lower bound; the rf row covers it
 			t.Run("a native row that does not cover this build does not resolve anything", func(t *testing.T) {
 				p := dbtest.NewPackage("openssl", "1.1.1-0rfubu.1", syftPkg.DebPkg).WithDistro(rfDistro).Build()
 
@@ -181,10 +158,7 @@ func TestRapidFortUbuntu_StreamFixResolvesNativeDisclosure(t *testing.T) {
 					HasFix(vulnerability.FixStateFixed, "1.1.1-3rfubu.1")
 			})
 
-			// both rows match a build below the rebuild fix, but they disagree: the native row has no
-			// fix and the rf row names one. Reporting both would emit two findings for one package
-			// and one CVE that are identical in the output apart from that contradiction, so only
-			// the row that names the fix is kept.
+			// both rows cover this build; the native row has no fix and the rf row names one
 			t.Run("rebuild below its stream fix is reported once, with the fix", func(t *testing.T) {
 				p := dbtest.NewPackage("openssl", "1.1.1-2rfubu.1", syftPkg.DebPkg).WithDistro(rfDistro).Build()
 

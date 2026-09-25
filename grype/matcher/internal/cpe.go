@@ -89,7 +89,7 @@ func FindResultsByCPEs(vulnProvider vulnerability.Provider, p pkg.Package, upstr
 			return nil, nil, fmt.Errorf("matcher failed to fetch by CPE pkg=%q: %w", p.Name, err)
 		}
 
-		vulns, notVulnerable := applicable.SplitVulnerable(verObj)
+		vulns, notVulnerable := SplitVulnerable(applicable, verObj)
 
 		// add affected vulns to the top level set; nothing is reconciled until the set becomes matches
 		affected = affected.Merge(vulns)

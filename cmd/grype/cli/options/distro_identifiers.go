@@ -9,8 +9,7 @@ import (
 )
 
 type DistroIdentifiers struct {
-	// RapidFort remaps the detected base distro of RapidFort-curated images (identified by image
-	// labels) to the rapidfort-* distro identities so their curated vulnerability data is used
+	// RapidFort remaps the detected base distro of RapidFort-curated images to the rapidfort-* distros
 	RapidFort DistroIdentifier `yaml:"rapidfort" json:"rapidfort" mapstructure:"rapidfort"`
 }
 
@@ -44,7 +43,6 @@ func DefaultDistroIdentifiers() DistroIdentifiers {
 		panic("default distro identifiers do not contain the rapidfort rule")
 	}
 
-	// use API defaults for the CLI configuration
 	return DistroIdentifiers{
 		RapidFort: DistroIdentifier{
 			Apply: string(rapidfort.Apply),

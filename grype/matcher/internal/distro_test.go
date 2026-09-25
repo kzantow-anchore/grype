@@ -105,8 +105,7 @@ func TestFindMatchesByPackageDistro(t *testing.T) {
 }
 
 func TestFindResultsByDistroAcrossUpstreams_UnknownBinaryVersion(t *testing.T) {
-	// the binary's own version says nothing, but its upstream carries one of its own: the upstream
-	// is still searched, and only the binary's own search is skipped
+	// only the binary's own search is skipped; its upstream has a version and is still searched
 	p := pkg.Package{
 		ID:      pkg.ID(uuid.NewString()),
 		Name:    "neutron-devel",
@@ -122,7 +121,6 @@ func TestFindResultsByDistroAcrossUpstreams_UnknownBinaryVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"CVE-2014-fake-1"}, idsOf(vulnerable))
 
-	// with nothing else to search, an unknown version still finds nothing
 	p.Upstreams = nil
 	vulnerable, _, err = FindResultsByDistroAcrossUpstreams(newMockProviderByDistro(), p, nil, match.PythonMatcher, nil)
 	require.NoError(t, err)

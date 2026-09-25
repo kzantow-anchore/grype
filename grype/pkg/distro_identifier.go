@@ -7,7 +7,7 @@ import (
 	"github.com/anchore/syft/syft/source"
 )
 
-// applyDistroIdentifiers returns the identified distro based on source evidence
+// applyDistroIdentifiers applies the first identifier triggered by the source evidence to d.
 func applyDistroIdentifiers(s *sbom.SBOM, d *distro.Distro, identifiers []distro.Identifier) *distro.Distro {
 	if d == nil {
 		return d
@@ -32,8 +32,8 @@ func applyDistroIdentifiers(s *sbom.SBOM, d *distro.Distro, identifiers []distro
 
 		nd := distro.New(newType, d.Version, "", d.IDLike...)
 
-		// do not inherit base-distro channels (e.g. esm/eus): those describe the base vendor's fix
-		// streams and would exclude the identified distro's channel-less OS records from matching
+		// base-distro channels (e.g. esm/eus) are not inherited: they would exclude the identified
+		// distro's channel-less OS records
 		nd.Channels = o.Channels
 
 		log.WithFields("rule", o.Name, "from", d.ID(), "to", newID).Info("applying source-evidence distro identifier")
@@ -44,8 +44,7 @@ func applyDistroIdentifiers(s *sbom.SBOM, d *distro.Distro, identifiers []distro
 	return d
 }
 
-// identifierTriggered indicates if the scanned source carries any of the identifier's
-// evidence: a marker file (via hasPath) or a matching container image label.
+// identifierTriggered indicates if the scanned source carries a marker file or a matching image label.
 func identifierTriggered(o distro.Identifier, s *sbom.SBOM) bool {
 	if s != nil {
 		for _, p := range o.MarkerPaths {
@@ -62,8 +61,7 @@ func identifierTriggered(o distro.Identifier, s *sbom.SBOM) bool {
 	return false
 }
 
-// sourceMatchesLabel indicates if the source describes a container image whose config labels
-// satisfy the given matcher.
+// sourceMatchesLabel indicates if the source is a container image with a label satisfying m.
 func sourceMatchesLabel(src *source.Description, m distro.LabelMatcher) bool {
 	if src == nil {
 		return false
@@ -83,9 +81,8 @@ func sourceMatchesLabel(src *source.Description, m distro.LabelMatcher) bool {
 	return false
 }
 
-// sbomHasPath reports whether the SBOM's file catalog contains the given path. Best effort:
-// default syft cataloging does not capture arbitrary file paths, so this only finds markers when
-// the SBOM was produced with a file cataloger that recorded them.
+// sbomHasPath reports whether the SBOM's file catalog contains path. Default syft cataloging does
+// not record arbitrary files, so this only finds markers a file cataloger recorded.
 func sbomHasPath(s *sbom.SBOM, path string) bool {
 	if s == nil {
 		return false

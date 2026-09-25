@@ -650,9 +650,7 @@ func (m *MultipleFindingAssertion) WithDetailType(detailType match.Type) *Single
 	return newSingleFindingAssertion(m.t, m.parent.pkg, &m.parent.matches[matchIdx], matchIdx, tracker)
 }
 
-// HasCount asserts how many matches share the selected vulnerability ID — the
-// count check that SelectMatch gets for free by fataling on more than one, and
-// which a subset selected by namespace or detail type otherwise leaves unstated.
+// HasCount asserts how many matches share the selected vulnerability ID.
 func (m *MultipleFindingAssertion) HasCount(count int) *MultipleFindingAssertion {
 	m.t.Helper()
 	var got []string
@@ -663,12 +661,9 @@ func (m *MultipleFindingAssertion) HasCount(count int) *MultipleFindingAssertion
 	return m
 }
 
-// WithNamespace narrows the subset to the single match whose vulnerability lives
-// in the given namespace. Fatals if zero or more than one match in the subset is
-// in that namespace. This is how a CVE that surfaces once per searched namespace
-// is disambiguated (e.g. a rapidfort package whose release-stream channel and
-// channel-less rows both carry a fix for it). The selected match becomes tracked
-// for completeness purposes.
+// WithNamespace narrows the subset to the single match in the given namespace, fataling if there
+// are zero or several (e.g. a CVE found in both a release-stream channel and the channel-less rows).
+// The selected match becomes tracked for completeness purposes.
 func (m *MultipleFindingAssertion) WithNamespace(namespace string) *SingleFindingAssertion {
 	m.t.Helper()
 
