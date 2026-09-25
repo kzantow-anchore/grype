@@ -126,7 +126,7 @@ func MatchPackageByDistroAcrossUpstreams(provider vulnerability.Provider, p pkg.
 		return nil, nil, err
 	}
 
-	return vulnerable.ToMatches(), OwnershipIgnores(p, "DistroPackageFixed", notVulnerable.Vulnerabilities()...), nil
+	return vulnerable.ToMatches(), OwnershipIgnores(p, ignorereasons.DistroFixed, notVulnerable.Vulnerabilities()...), nil
 }
 
 // MatchPackageByDistro is the []match.Match form of FindResultsByDistro: vulnerable records become

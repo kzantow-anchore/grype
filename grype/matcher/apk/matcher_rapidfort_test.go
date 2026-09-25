@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/anchore/grype/grype/distro"
+	"github.com/anchore/grype/grype/internal/ignorereasons"
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/vulnerability"
@@ -60,11 +61,11 @@ func TestRapidFortAlpine_Matching(t *testing.T) {
 				WithCPE("cpe:2.3:a:haxx:curl:8.7.1:*:*:*:*:*:*:*").
 				Build()
 
-			// the fixed CVE becomes a DistroPackageFixed ownership ignore
+			// the fixed CVE becomes a distro-fixed ownership ignore
 			findings := db.Match(t, &matcher, p)
 			findings.OnlyHasVulnerabilities()
 			findings.Ignores().
-				SelectRelatedPackageIgnores("DistroPackageFixed", "CVE-2024-2398").
+				SelectRelatedPackageIgnores(ignorereasons.DistroFixed, "CVE-2024-2398").
 				ForPackage(pkgID)
 		})
 	})

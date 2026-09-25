@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/anchore/grype/grype/distro"
+	"github.com/anchore/grype/grype/internal/ignorereasons"
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/vulnerability"
@@ -138,11 +139,11 @@ func TestRapidFortUbuntu_StreamFixResolvesNativeDisclosure(t *testing.T) {
 					WithDistro(rfDistro).
 					Build()
 
-				// the resolved CVE becomes a DistroPackageFixed ownership ignore
+				// the resolved CVE becomes a distro-fixed ownership ignore
 				findings := db.Match(t, matcher, p)
 				findings.OnlyHasVulnerabilities()
 				findings.Ignores().
-					SelectRelatedPackageIgnores("DistroPackageFixed", "CVE-2026-11111").
+					SelectRelatedPackageIgnores(ignorereasons.DistroFixed, "CVE-2026-11111").
 					ForPackage(pkgID)
 			})
 
