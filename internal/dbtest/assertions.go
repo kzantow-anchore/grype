@@ -661,9 +661,8 @@ func (m *MultipleFindingAssertion) HasCount(count int) *MultipleFindingAssertion
 	return m
 }
 
-// WithNamespace narrows the subset to the single match in the given namespace, fataling if there
-// are zero or several (e.g. a CVE found in both a release-stream channel and the channel-less rows).
-// The selected match becomes tracked for completeness purposes.
+// WithNamespace selects the single match in namespace, failing on zero or several. The match is
+// tracked for completeness.
 func (m *MultipleFindingAssertion) WithNamespace(namespace string) *SingleFindingAssertion {
 	m.t.Helper()
 

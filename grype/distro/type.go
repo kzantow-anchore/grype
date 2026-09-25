@@ -39,8 +39,7 @@ const (
 	PostmarketOS Type = "postmarketos"
 	Hummingbird  Type = "hummingbird"
 
-	// RapidFort curated images derive from a base distro but publish vulnerability data under their
-	// own OS name. These types are never read from /etc/os-release; they are applied by Identifier.
+	// RapidFort types are never read from /etc/os-release; they are applied by an Identifier
 	RapidFortUbuntu Type = "rapidfort-ubuntu"
 	RapidFortAlpine Type = "rapidfort-alpine"
 	RapidFortDebian Type = "rapidfort-debian"

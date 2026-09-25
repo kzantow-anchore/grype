@@ -84,8 +84,7 @@ func (m *Matcher) Match(vp vulnerability.Provider, p pkg.Package) ([]match.Match
 // the feed calls unaffected, and apk "< 0" NAKs, which are vulnerable at no version and so land here
 // too. That is what makes it the right thing to reconcile other sources against.
 func (m *Matcher) distroResults(vp vulnerability.Provider, p pkg.Package) (vulnerable, allFixed result.Set, err error) {
-	// the package and its origin packages are split together so a fix under the origin name resolves
-	// a disclosure under the package name. APK has no epochs, so no comparison config.
+	// APK has no epochs, so no comparison config
 	return internal.FindResultsByDistroAcrossUpstreams(vp, p, nil, m.Type(), nil)
 }
 
@@ -174,9 +173,7 @@ func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg, cat
 	return stripFixState(cpeSet), ignores, nil
 }
 
-// attributeTo records results against the SBOM (catalog) package rather than the upstream package
-// they were searched with. A CPE search carries no package name, so its details are CPE matches
-// whichever package it was made for.
+// attributeTo records results against the cataloged package rather than the upstream searched.
 func attributeTo(s result.Set, catalogPkg pkg.Package) result.Set {
 	return s.Map(func(r *result.Result) {
 		r.Package = &catalogPkg

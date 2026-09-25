@@ -5,20 +5,18 @@ import (
 	"strings"
 )
 
-// searchRuleIndex files compiled rules by their exact-match predicates (MatchDistroName,
-// MatchEcosystem) so a query evaluates only the rules that could match it. The regex predicates
-// then decide, so the index never changes which rules apply.
+// searchRuleIndex buckets rules by their exact-match predicates so a query only evaluates rules that
+// could match it. Each rule is in exactly one bucket.
 type searchRuleIndex struct {
-	// rules is the compiled set in the order it was read; the buckets below hold the same pointers
 	rules []*compiledSearchRule
 
-	// byDistroName files rules with a MatchDistroName, keyed by its lowercased value
+	// byDistroName is keyed by lowercased MatchDistroName
 	byDistroName map[string][]*compiledSearchRule
 
-	// byEcosystem files rules with no distro name but a MatchEcosystem, keyed by its lowercased value
+	// byEcosystem holds rules with no MatchDistroName, keyed by lowercased MatchEcosystem
 	byEcosystem map[string][]*compiledSearchRule
 
-	// unscoped holds rules with neither, which are candidates for every query
+	// unscoped holds rules with neither
 	unscoped []*compiledSearchRule
 }
 
@@ -31,8 +29,6 @@ func newSearchRuleIndex(rows []SearchRule) *searchRuleIndex {
 
 	for i, r := range idx.rules {
 		r.ord = i
-
-		// each rule is filed under exactly one bucket, so candidates need no deduplication
 		switch {
 		case r.row.MatchDistroName != "":
 			key := strings.ToLower(r.row.MatchDistroName)
@@ -48,8 +44,7 @@ func newSearchRuleIndex(rows []SearchRule) *searchRuleIndex {
 	return idx
 }
 
-// candidates appends the rules that could match s to dst, in the order the rules were read, so the
-// result equals a linear scan over the whole set.
+// candidates appends the rules that could match s to dst, in read order.
 func (idx *searchRuleIndex) candidates(s searchSubject, dst []*compiledSearchRule) []*compiledSearchRule {
 	if idx == nil || len(idx.rules) == 0 {
 		return dst

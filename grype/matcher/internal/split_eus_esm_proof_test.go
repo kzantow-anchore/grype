@@ -60,7 +60,7 @@ func streamRecord(namespace, constraint string, format version.Format, fixVersio
 
 var proofPkg = pkg.Package{ID: "pkg-1", Name: "pkg"}
 
-// proofSet puts every record under one ID, ranked by namespace (see confidenceForNamespace).
+// proofSet puts every record under one ID, ranked by namespace (see rankForNamespace).
 func proofSet(vulns ...vulnerability.Vulnerability) result.Set {
 	var results []result.Result
 	for _, v := range vulns {

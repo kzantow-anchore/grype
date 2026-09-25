@@ -41,7 +41,6 @@ var _ vulnerability.EOLChecker = &DB{}
 
 var _ v6.SearchRuleProvider = &DB{}
 
-// SearchRewrites delegates to the underlying provider when it exposes search rules.
 func (db *DB) SearchRewrites(criteria []vulnerability.Criteria) v6.SearchRewrites {
 	if rp, ok := db.provider.(v6.SearchRuleProvider); ok {
 		return rp.SearchRewrites(criteria)

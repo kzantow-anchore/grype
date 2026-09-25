@@ -54,8 +54,7 @@ func (m *Matcher) Match(store vulnerability.Provider, p pkg.Package) ([]match.Ma
 		versionConfig := version.ComparisonConfig{
 			MissingEpochStrategy: m.cfg.MissingEpochStrategy,
 		}
-		// the binary and its source packages are split together: ubuntu and debian data is keyed on
-		// source packages, so the fix for a binary's disclosure is often stored under the source name
+		// ubuntu and debian data is keyed on source packages
 		exactMatches, exactIgnores, err := internal.MatchPackageByDistroAcrossUpstreams(store, p, m.Type(), &versionConfig)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to match by exact package name: %w", err)

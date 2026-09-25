@@ -91,8 +91,7 @@ func compareDetails(a, b Detail) int {
 }
 
 // CompareTypes orders two match types strongest-first (direct, indirect, CPE), with unrecognized
-// types last. It is the one ordering of match types: record authority (see compareRecordAuthority)
-// and result ranking (see result.Rank) both use it.
+// types last.
 func CompareTypes(a, b Type) int {
 	if a == b {
 		return 0
@@ -154,7 +153,7 @@ func (m Details) Swap(i, j int) {
 	m[i], m[j] = m[j], m[i]
 }
 
-// BestType returns the strongest match type in the set (see CompareTypes), or "" when it is empty.
+// BestType returns the strongest match type, or "" when empty.
 func (m Details) BestType() Type {
 	var best Type
 	for _, d := range m {

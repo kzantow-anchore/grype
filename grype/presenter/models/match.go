@@ -46,8 +46,7 @@ func newMatch(m match.Match, p pkg.Package, metadataProvider vulnerability.Metad
 		}
 	}
 
-	// RelatedVulnerabilities is sorted by Match.Merge but otherwise in DB order; sort by
-	// (namespace, ID) as mergeReferences does for stable output
+	// unmerged matches are in DB order
 	sort.SliceStable(relatedVulnerabilities, func(i, j int) bool {
 		if relatedVulnerabilities[i].Namespace != relatedVulnerabilities[j].Namespace {
 			return relatedVulnerabilities[i].Namespace < relatedVulnerabilities[j].Namespace
@@ -68,7 +67,6 @@ func newMatch(m match.Match, p pkg.Package, metadataProvider vulnerability.Metad
 
 	format := pkg.VersionFormat(p)
 
-	// report the fix as it applies to this package, not the record's full fix list
 	reported := m.Vulnerability
 	reported.Fix = upgradesFor(m.Vulnerability.Fix, p, format)
 
@@ -101,14 +99,9 @@ func getFix(vuln vulnerability.Vulnerability, p pkg.Package, format version.Form
 	}
 }
 
-// upgradesFor narrows a fix to the versions above the installed version. A record's affected ranges
-// are collapsed into one fix list before a match is built, so a sibling range's fix can be at or
-// below the installed version, and reporting it tells the reader to "upgrade" to what they run.
-//
-// This is a reporting concern: matchers read a fix at or below the installed version as "this stream
-// considers the version fixed" when reconciling streams, so it cannot be dropped earlier.
-//
-// An emptied fix list is reported as not-fixed. Versions that cannot be compared are kept.
+// upgradesFor drops fix versions at or below the installed version, which a record's other affected
+// ranges can contribute. Matchers need those versions to reconcile streams, so they are only dropped
+// for reporting. A fix left with no versions is reported as not-fixed; incomparable versions are kept.
 func upgradesFor(fix vulnerability.Fix, p pkg.Package, format version.Format) vulnerability.Fix {
 	if len(fix.Versions) == 0 || p.Version == "" {
 		return fix
@@ -146,8 +139,7 @@ func upgradesFor(fix vulnerability.Fix, p pkg.Package, format version.Format) vu
 	return out
 }
 
-// isUpgrade indicates whether fixVersion is newer than installed. An unparseable or incomparable fix
-// version is treated as an upgrade so it still reaches the report.
+// isUpgrade treats an unparseable or incomparable fix version as an upgrade.
 func isUpgrade(installed *version.Version, fixVersion string, format version.Format, pkgName string) bool {
 	fixed := version.New(fixVersion, format)
 	if err := fixed.Validate(); err != nil {
@@ -155,7 +147,7 @@ func isUpgrade(installed *version.Version, fixVersion string, format version.For
 			Trace("unable to parse fix version; reporting it")
 		return true
 	}
-	// installed is the receiver so its comparison config (e.g. missing-epoch strategy) governs
+	// installed is the receiver so its comparison config applies
 	cmp, err := installed.Compare(fixed)
 	if err != nil {
 		log.WithFields("package", pkgName, "fixVersion", fixVersion, "error", err).

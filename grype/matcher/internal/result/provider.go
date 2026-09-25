@@ -21,7 +21,7 @@ var _ Provider = (*provider)(nil)
 type Provider interface {
 	FindResults(criteria ...vulnerability.Criteria) (Set, error)
 
-	// FindAll returns the affected and unaffected records matching criteria
+	// FindAll returns affected and unaffected records
 	FindAll(criteria ...vulnerability.Criteria) (Set, error)
 }
 
@@ -43,8 +43,6 @@ func (p provider) FindResults(criteria ...vulnerability.Criteria) (Set, error) {
 	results := Set{}
 	// get each iteration here so detailProvider will have the specific values used for searches
 	for _, cs := range search.CriteriaIterator(criteria) {
-		// search rules may add searches over other OS rows; each records its stream on the results it
-		// produces
 		for _, s := range applySearchRules(p.vulnProvider, p.catalogedPkg, cs) {
 			vulns, err := p.vulnProvider.FindVulnerabilities(s.criteria...)
 			if err != nil {
@@ -74,14 +72,11 @@ func (p provider) FindResults(criteria ...vulnerability.Criteria) (Set, error) {
 }
 
 func (p provider) FindAll(criteria ...vulnerability.Criteria) (Set, error) {
-	// affected and unaffected records are reached by mutually exclusive searches
 	affected, err := p.FindResults(criteria...)
 	if err != nil {
 		return Set{}, err
 	}
 
-	// no version criteria: the split needs the records this version falls outside of (fixed
-	// records, and NAKs that do not cover it)
 	unaffected, err := p.FindResults(append(slices.Clone(criteria), search.ForUnaffected())...)
 	if err != nil {
 		return Set{}, err
@@ -126,8 +121,7 @@ func extractSearchParameters(criteriaSet []vulnerability.Criteria, vuln vulnerab
 			pkgParams.Version = c.Version.Raw
 
 		case *search.PackageVersionCriteria:
-			// the searched version, without constraining results; internal.SplitVulnerable reads it
-			// back off the details
+			// read back by internal.SplitVulnerable
 			if pkgParams == nil {
 				pkgParams = &match.PackageParameter{}
 			}
@@ -172,8 +166,6 @@ func extractSearchParameters(criteriaSet []vulnerability.Criteria, vuln vulnerab
 	return cpeParams, distroParams, ecosystemParams, pkgParams
 }
 
-// determineMatchType determines if this is a direct or indirect match: indirect when the search said
-// so (see search.ByIndirectPackageName) or searched a name other than the cataloged package's.
 func determineMatchType(catalogedPkg pkg.Package, pkgParams *match.PackageParameter, indirect bool) match.Type {
 	if indirect || pkgParams != nil && catalogedPkg.Name != pkgParams.Name {
 		return match.ExactIndirectMatch

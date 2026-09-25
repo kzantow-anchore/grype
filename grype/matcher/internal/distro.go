@@ -15,13 +15,10 @@ import (
 )
 
 // FindResultsByDistro searches the distro feed for every name the provider claims for searchPkg and
-// splits the union into the records this version is vulnerable to and everything else (see
-// SplitVulnerable). notVulnerable holds fixed records, records whose ranges miss this version,
-// records a more specific stream overruled, and unaffected/NAK records; callers reconcile other
-// sources (e.g. NVD/CPE) against it and build ownership ignores from it.
+// splits the union (see SplitVulnerable).
 //
-// The fanout over PackageSearchNames is what makes the rootio NAK pattern work: `rootio-libssl3`
-// also searches `libssl3`, and a rootio NAK denies the upstream disclosure by ID + alias identity.
+// Splitting across PackageSearchNames lets a rootio NAK under `rootio-libssl3` deny a disclosure
+// under `libssl3`.
 func FindResultsByDistro(provider vulnerability.Provider, searchPkg pkg.Package, catalogPkg *pkg.Package, upstreamMatcher match.MatcherType, cfg *version.ComparisonConfig) (vulnerable result.Set, notVulnerable result.Set, err error) {
 	if searchPkg.Distro == nil {
 		return result.Set{}, result.Set{}, nil
@@ -41,18 +38,16 @@ func FindResultsByDistro(provider vulnerability.Provider, searchPkg pkg.Package,
 		return nil, nil, err
 	}
 
-	// one split over every name: a fix under one name resolves a disclosure under another
 	vulnerable, notVulnerable = SplitVulnerable(applicable, pkgVersion)
 	return vulnerable, notVulnerable, nil
 }
 
-// FindResultsByDistroAcrossUpstreams searches the distro feed for searchPkg and each package it was
-// built from, then splits the union once, so a fix recorded under the source name resolves a
-// disclosure recorded under the binary name. Each record is compared against the version its own
-// search used (see searchedVersion), since an upstream's version can differ from the binary's.
+// FindResultsByDistroAcrossUpstreams searches the distro feed for searchPkg and its upstream
+// packages, then splits the union once, so a fix under the source name resolves a disclosure under
+// the binary name.
 //
-// catalogPkg is the package matches are attributed to when searchPkg is not the cataloged one (rpm
-// searches with an epoch patched in); nil attributes them to searchPkg.
+// catalogPkg is the package matches are attributed to when it differs from searchPkg (e.g. an rpm
+// searched with an explicit epoch); nil attributes them to searchPkg.
 func FindResultsByDistroAcrossUpstreams(provider vulnerability.Provider, searchPkg pkg.Package, catalogPkg *pkg.Package, upstreamMatcher match.MatcherType, cfg *version.ComparisonConfig) (vulnerable result.Set, notVulnerable result.Set, err error) {
 	if searchPkg.Distro == nil {
 		return result.Set{}, result.Set{}, nil
@@ -60,13 +55,10 @@ func FindResultsByDistroAcrossUpstreams(provider vulnerability.Provider, searchP
 
 	rp := result.NewProvider(provider, matchPackage(searchPkg, catalogPkg), upstreamMatcher)
 
-	// the fallback comparison version (see SplitVulnerable); an unknown version satisfies nothing
-	// but still carries the format and comparison config
 	pkgVersion := distroVersion(searchPkg, cfg)
 
 	applicable := result.Set{}
 	if isUnknownVersion(searchPkg.Version) {
-		// the upstreams may still carry versions worth searching
 		log.WithFields("package", searchPkg.Name).Trace("skipping package with unknown version")
 	} else {
 		applicable, err = applicableForDistro(provider, rp, searchPkg, pkgVersion, search.ByPackageName)
@@ -80,8 +72,7 @@ func FindResultsByDistroAcrossUpstreams(provider vulnerability.Provider, searchP
 			continue
 		}
 
-		// an upstream's records are indirect matches even under the package's own name (a package that
-		// is its own origin), which comparing names cannot tell
+		// indirect even when the upstream has the package's own name
 		found, err := applicableForDistro(provider, rp, upstreamPkg, distroVersion(upstreamPkg, cfg), search.ByIndirectPackageName)
 		if err != nil {
 			return nil, nil, err
@@ -93,8 +84,7 @@ func FindResultsByDistroAcrossUpstreams(provider vulnerability.Provider, searchP
 	return vulnerable, notVulnerable, nil
 }
 
-// applicableForDistro collects every record for searchPkg over every name the provider claims for it
-// (rootio packages fan out to the bare upstream name), each searched by byName.
+// applicableForDistro collects every record for each name the provider claims for searchPkg.
 func applicableForDistro(provider vulnerability.Provider, rp result.Provider, searchPkg pkg.Package, pkgVersion *version.Version, byName func(string) vulnerability.Criteria) (result.Set, error) {
 	applicable := result.Set{}
 	for _, name := range provider.PackageSearchNames(searchPkg) {
@@ -129,8 +119,7 @@ func MatchPackageByDistroAcrossUpstreams(provider vulnerability.Provider, p pkg.
 	return vulnerable.ToMatches(), OwnershipIgnores(p, ignorereasons.DistroFixed, notVulnerable.Vulnerabilities()...), nil
 }
 
-// MatchPackageByDistro is the []match.Match form of FindResultsByDistro: vulnerable records become
-// matches, the rest become ownership ignores (e.g. an APK that owns NPM).
+// MatchPackageByDistro is the []match.Match form of FindResultsByDistro.
 func MatchPackageByDistro(provider vulnerability.Provider, searchPkg pkg.Package, catalogPkg *pkg.Package, upstreamMatcher match.MatcherType, cfg *version.ComparisonConfig) ([]match.Match, []match.IgnoreFilter, error) {
 	vulnerable, notVulnerable, err := FindResultsByDistro(provider, searchPkg, catalogPkg, upstreamMatcher, cfg)
 	if err != nil {

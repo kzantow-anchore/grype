@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/anchore/grype/grype/distro"
@@ -13,52 +14,35 @@ import (
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// Rules are evaluated against the criteria of one search (see searchSubjects), not against the
-// cataloged package: matchers search under other names and versions (upstream packages, fanned-out
-// names, epoch-patched rpm versions). A predicate whose subject the criteria do not state cannot
-// match. The caller states what a search does not carry but the rules need as additional criteria
-// (see result.applySearchRules): the package's ecosystem on an OS search, and the package's name,
-// version and OS on a CPE search.
-//
-// Rules are ranked, not ordered: only the highest-priority matching rules apply, ties all apply, and
-// rules with no substitution always apply (see highestPriority).
-//
-// Every pattern is anchored (see anchorPattern). Replacements are templates (see parseTemplate):
-// `${name}` references a named group `(?P<name>...)` of any match pattern, and `$N` references group N
-// of the pattern the replacement is derived from (MatchPackageVersion for ReplacementChannel,
-// MatchPackageName for ReplacementPackageName). Use `.*?` before a group so it binds the first marker
-// rather than the last.
+// Rules are evaluated against the criteria of one search, not the cataloged package, since matchers
+// search under other names and versions (upstreams, rootio names, epoch-patched rpm versions). A
+// predicate on something the criteria do not state does not match.
 
-// SearchRuleProvider is implemented by providers that evaluate search rules (see SearchRule).
+// SearchRuleProvider is implemented by providers that evaluate search rules.
 type SearchRuleProvider interface {
-	// SearchRewrites returns how the search stated by criteria is rewritten: the zero value when no
-	// rule applies.
+	// SearchRewrites returns the zero value when no rule applies.
 	SearchRewrites(criteria []vulnerability.Criteria) SearchRewrites
 }
 
-// SearchRewrites is the resolved outcome of the search rules that apply to one search.
+// SearchRewrites is the combined outcome of the search rules that apply to one search.
 type SearchRewrites struct {
-	// Distros are OS identities to search in addition to the search's own: a channel of its OS, or
-	// another OS
+	// Distros are additional OS identities to search: a channel of the searched OS, or another OS
 	Distros []distro.Distro
 
-	// PackageNames are names to search in addition to the search's own
+	// PackageNames are additional names to search
 	PackageNames []string
 
-	// ExcludeOSLess indicates the package is fully described by OS rows (its own and Distros), so
-	// searches that read no OS rows for it are not run. The OS-less partition is the CPE-indexed (NVD)
-	// records: a CPE search for a package on an OS is such a search.
+	// ExcludeOSLess skips searches that read no OS rows (CPE searches against NVD), since the
+	// package's OS rows fully describe it
 	ExcludeOSLess bool
 }
 
-// anchorPattern anchors a rule pattern to the whole subject. The group is non-capturing so $N
-// references keep their numbers, and so a top-level `|` does not anchor only its outer branches.
+// anchorPattern matches the whole subject. The group is non-capturing so $N references keep their
+// numbers, and so a top-level `|` is anchored on every branch.
 func anchorPattern(p string) string {
 	return "^(?:" + p + ")$"
 }
 
-// Validate reports why the row is not a legal rule. It is shared by compileSearchRules (skip) and
-// BeforeCreate (reject).
 func (o SearchRule) Validate() error {
 	_, err := compileSearchRule(o)
 	return err
@@ -72,19 +56,16 @@ func (o SearchRule) validatePredicates() error {
 		return fmt.Errorf("search rule with a replacement package name must have a package name pattern")
 	}
 	if o.MatchDistroName == "" && o.ReplacementChannel != nil {
-		// a channel is relative to one OS
 		return fmt.Errorf("search rule with a channel substitution must have a distro name to match")
 	}
 	if o.MatchPackageName == "" && o.MatchPackageVersion == "" && o.hasSubstitution() {
-		// only a rule with no substitution may be scoped to an OS or ecosystem alone
 		return fmt.Errorf("search rule with a substitution must have at least one package predicate")
 	}
 	return nil
 }
 
-// hasSubstitution indicates whether the rule changes how a matched package is searched. A rule with
-// no substitution marks packages fully described by OS rows (see SearchRewrites.ExcludeOSLess). A
-// distroless search is not a substitution (see isDistrolessSearch).
+// hasSubstitution is false for rules that only mark packages as fully described by OS rows, and for
+// rules that only keep the OS-less partition searched.
 func (o SearchRule) hasSubstitution() bool {
 	if o.isDistrolessSearch() {
 		return o.ReplacementChannel != nil || o.ReplacementPackageName != ""
@@ -92,19 +73,16 @@ func (o SearchRule) hasSubstitution() bool {
 	return o.ReplacementChannel != nil || o.ReplacementDistroName != nil || o.ReplacementPackageName != ""
 }
 
-// isDistrolessSearch indicates whether the rule names the OS-less partition (the CPE-indexed, NVD
-// records): a non-NULL but empty replacement OS name. No store search is rewritten; the rule only keeps
-// that partition searched (see SearchRewrites.ExcludeOSLess).
+// isDistrolessSearch is true for an empty, non-NULL ReplacementDistroName, which keeps CPE (NVD)
+// searches for the matched packages.
 func (o SearchRule) isDistrolessSearch() bool {
 	return o.ReplacementDistroName != nil && *o.ReplacementDistroName == ""
 }
 
-// compiledSearchRule is the compiled form of a SearchRule row: each pattern as an anchored regex, each
-// replacement as a parsed template.
 type compiledSearchRule struct {
 	row SearchRule
 
-	// ord is the rule's position in the set as read (see searchRuleIndex.candidates)
+	// ord is the rule's position in the set as read
 	ord int
 
 	distroVersion     *regexp.Regexp
@@ -118,7 +96,6 @@ type compiledSearchRule struct {
 	name       template
 }
 
-// compileSearchRule compiles and validates one row.
 func compileSearchRule(row SearchRule) (*compiledSearchRule, error) {
 	if err := row.validatePredicates(); err != nil {
 		return nil, err
@@ -174,8 +151,8 @@ func compileSearchRule(row SearchRule) (*compiledSearchRule, error) {
 	return rule, nil
 }
 
-// namedGroups returns the named groups of the match patterns, which any replacement may reference. A
-// name defined by more than one pattern is ambiguous. Exclude patterns bind nothing: they only reject.
+// namedGroups returns the named groups of the match patterns, rejecting a name defined by more than
+// one pattern.
 func (r *compiledSearchRule) namedGroups() (map[string]struct{}, error) {
 	out := map[string]struct{}{}
 	for _, re := range []*regexp.Regexp{r.distroVersion, r.pkgName, r.pkgVersion} {
@@ -200,7 +177,7 @@ func (r *compiledSearchRule) namedGroups() (map[string]struct{}, error) {
 	return out, nil
 }
 
-// compileSearchRules compiles rows in order, skipping invalid rows with a warning.
+// compileSearchRules skips invalid rows with a warning.
 func compileSearchRules(rows []SearchRule) []*compiledSearchRule {
 	var rules []*compiledSearchRule
 	for _, row := range rows {
@@ -214,7 +191,7 @@ func compileSearchRules(rows []SearchRule) []*compiledSearchRule {
 	return rules
 }
 
-// searchSubject is what one search states about the package it searches for, as the rules read it.
+// searchSubject is what one search states about the package it searches for.
 type searchSubject struct {
 	name      string
 	version   string
@@ -222,8 +199,8 @@ type searchSubject struct {
 	distro    *distro.Distro
 }
 
-// searchSubjects restates criteria as the subjects the rules are evaluated against: one per OS the
-// search reads, or one with no OS. The last criterion of each kind wins.
+// searchSubjects returns one subject per searched OS, or one with no OS. The last criterion of each
+// kind wins.
 func searchSubjects(criteria []vulnerability.Criteria) []searchSubject {
 	var subject searchSubject
 	var distros []distro.Distro
@@ -234,8 +211,6 @@ func searchSubjects(criteria []vulnerability.Criteria) []searchSubject {
 		case *search.IndirectPackageNameCriteria:
 			subject.name = c.PackageName
 		case *search.VersionCriteria:
-			subject.version = c.Version.Raw
-		case search.VersionCriteria:
 			subject.version = c.Version.Raw
 		case *search.PackageVersionCriteria:
 			subject.version = c.Version.Raw
@@ -262,20 +237,17 @@ func searchSubjects(criteria []vulnerability.Criteria) []searchSubject {
 	return out
 }
 
-// ruleMatch holds what a matching rule's patterns captured from the subject.
+// ruleMatch holds what a matching rule's patterns captured.
 type ruleMatch struct {
-	// named holds every named group of the match patterns (see namedGroups); an unmatched group is ""
 	named map[string]string
 
-	// nameGroups and versionGroups hold the positional groups of MatchPackageName and
-	// MatchPackageVersion, group 0 being the whole subject
+	// positional groups of MatchPackageName and MatchPackageVersion
 	nameGroups    []string
 	versionGroups []string
 }
 
-// match reports what the rule captured when every set predicate matches the subject. A predicate
-// whose subject the search does not state fails; an Exclude* predicate only rejects when its subject
-// is present and matches.
+// match returns the captures when every predicate matches. An Exclude* predicate only rejects when
+// its subject is present.
 func (r *compiledSearchRule) match(s searchSubject) (*ruleMatch, bool) {
 	m := &ruleMatch{}
 
@@ -311,7 +283,7 @@ func (r *compiledSearchRule) match(s searchSubject) (*ruleMatch, bool) {
 	return m, true
 }
 
-// capture matches re against subject, recording its named groups; nil when re does not match.
+// capture records re's named groups and returns its positional groups, or nil when re does not match.
 func (m *ruleMatch) capture(re *regexp.Regexp, subject string) []string {
 	groups := re.FindStringSubmatch(subject)
 	if groups == nil {
@@ -332,12 +304,10 @@ func (m *ruleMatch) capture(re *regexp.Regexp, subject string) []string {
 	return groups
 }
 
-// hasDistroPredicate indicates whether the rule constrains which OS it applies to.
 func (r *compiledSearchRule) hasDistroPredicate() bool {
 	return r.row.MatchDistroName != "" || r.distroVersion != nil
 }
 
-// matchesDistro indicates whether the distro predicates match; a search with no OS matches none.
 func (r *compiledSearchRule) matchesDistro(d *distro.Distro, m *ruleMatch) bool {
 	if d == nil {
 		return false
@@ -360,9 +330,8 @@ func (r *compiledSearchRule) matchesDistroVersion(d *distro.Distro, m *ruleMatch
 	return d.LabelVersion() != "" && m.capture(r.distroVersion, d.LabelVersion()) != nil
 }
 
-// overlayDistro returns the OS identity the rule adds to the search: the searched OS with the rule's
-// channel, and/or another OS name. nil when the rule rewrites no OS. An OS-less search can only gain
-// an OS name, version-free (e.g. echo alongside debian's OS-less ecosystem rows).
+// overlayDistro returns the OS the rule adds: the searched OS with the rule's channel, and/or another
+// OS name, or nil. A search with no OS can only gain a version-less OS name.
 func (r *compiledSearchRule) overlayDistro(s searchSubject, m *ruleMatch) *distro.Distro {
 	row := r.row
 	if (row.ReplacementChannel == nil && row.ReplacementDistroName == nil) || row.isDistrolessSearch() {
@@ -372,13 +341,13 @@ func (r *compiledSearchRule) overlayDistro(s searchSubject, m *ruleMatch) *distr
 	var name string
 	if row.ReplacementDistroName != nil {
 		if name = r.distroName.expand(nil, m.named); name == "" {
-			return nil // a template that expands empty names no OS
+			return nil
 		}
 	}
 
 	if s.distro == nil {
 		if name == "" {
-			return nil // a channel needs a searched OS to apply to
+			return nil
 		}
 		return distro.New(distro.TypeFromID(name), "", "")
 	}
@@ -397,7 +366,6 @@ func (r *compiledSearchRule) overlayDistro(s searchSubject, m *ruleMatch) *distr
 	return &overlay
 }
 
-// expandPackageName returns the additional name this rule adds, or "" when it adds none.
 func (r *compiledSearchRule) expandPackageName(m *ruleMatch) string {
 	if r.row.ReplacementPackageName == "" {
 		return ""
@@ -405,10 +373,6 @@ func (r *compiledSearchRule) expandPackageName(m *ruleMatch) string {
 	return r.name.expand(m.nameGroups, m.named)
 }
 
-// rewrites resolves the rules that apply to the search stated by criteria (see highestPriority) into
-// the searches they add, per OS the search reads. A rule with no substitution states the package is
-// fully described by OS rows, excluding the OS-less partition, unless a rule names that partition
-// (see isDistrolessSearch).
 func (idx *searchRuleIndex) rewrites(criteria []vulnerability.Criteria) SearchRewrites {
 	var out SearchRewrites
 	includeOSLess := false
@@ -435,7 +399,6 @@ func (idx *searchRuleIndex) rewrites(criteria []vulnerability.Criteria) SearchRe
 	return out
 }
 
-// matchedRule is a rule that matched a subject, with what it captured.
 type matchedRule struct {
 	rule  *compiledSearchRule
 	match *ruleMatch
@@ -452,9 +415,8 @@ func matchingRules(idx *searchRuleIndex, s searchSubject) []matchedRule {
 	return matched
 }
 
-// highestPriority narrows matched rules to those at the highest Priority. Rules with no substitution
-// are not ranked and are always kept: they state a fact about the package's data rather than compete
-// over how it is searched.
+// highestPriority keeps the matched rules at the highest Priority. Rules with no substitution are
+// always kept: they describe the package's data rather than compete over how it is searched.
 func highestPriority(matched []matchedRule) []matchedRule {
 	if len(matched) < 2 {
 		return matched
@@ -477,16 +439,15 @@ func highestPriority(matched []matchedRule) []matchedRule {
 	return out
 }
 
-// template is a parsed replacement: literal text and group references.
 type template []templatePart
 
 type templatePart struct {
 	literal string
 
-	// ref is the referenced group: a name, or a number for a positional reference
+	// ref is a group name or number; empty for a literal
 	ref string
 
-	// positional is the group number when ref is a number, else -1
+	// positional is the group number, or -1 when ref is a name
 	positional int
 }
 
@@ -529,7 +490,7 @@ func parseTemplate(s string) template {
 	return out
 }
 
-// extractRef returns the group reference at the start of s (which begins with `$`) and what follows it.
+// extractRef parses the reference at the start of s, which begins with `$`.
 func extractRef(s string) (ref, rest string, ok bool) {
 	s = s[1:]
 	braced := len(s) > 0 && s[0] == '{'
@@ -559,21 +520,15 @@ func isRefByte(b byte) bool {
 
 // positionalRef returns the group number ref names, or -1 when ref is a name.
 func positionalRef(ref string) int {
-	n := 0
-	for i := 0; i < len(ref); i++ {
-		if ref[i] < '0' || ref[i] > '9' {
-			return -1
-		}
-		n = n*10 + int(ref[i]-'0')
-		if n > 1<<16 {
-			return -1
-		}
+	n, err := strconv.Atoi(ref)
+	if err != nil || n < 0 {
+		return -1
 	}
 	return n
 }
 
-// validate reports a reference that can never resolve: a positional group positional does not have
-// (or any positional group when positional is nil), or a name no match pattern defines.
+// validate rejects references that can never resolve against positional (nil forbids positional
+// references) or named.
 func (t template) validate(positional *regexp.Regexp, named map[string]struct{}) error {
 	for _, p := range t {
 		switch {
@@ -595,8 +550,7 @@ func (t template) validate(positional *regexp.Regexp, named map[string]struct{})
 	return nil
 }
 
-// expand resolves the template: positional references against groups, names against named. An
-// unmatched group expands empty.
+// expand resolves references; an unmatched group expands empty.
 func (t template) expand(groups []string, named map[string]string) string {
 	var sb strings.Builder
 	for _, p := range t {

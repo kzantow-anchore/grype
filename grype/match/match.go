@@ -146,9 +146,8 @@ func mergeFix(base, other vulnerability.Fix, format version.Format) vulnerabilit
 	return out
 }
 
-// dedupeFixVersions collapses fix versions that name the same build under different spellings, e.g.
-// an rpm fix both with and without its zero epoch ("0:1.2-3" and "1.2-3"). The first spelling wins;
-// versions the format cannot compare are kept.
+// dedupeFixVersions collapses equal versions spelled differently (e.g. "0:1.2-3" and "1.2-3"),
+// keeping the first spelling.
 func dedupeFixVersions(versions []string, format version.Format) []string {
 	if len(versions) < 2 || format == version.UnknownFormat {
 		return versions
@@ -174,7 +173,7 @@ func dedupeFixVersions(versions []string, format version.Format) []string {
 	return out
 }
 
-// constraintFormat is the version format of the merged records, preferring a's; unknown when neither has one.
+// constraintFormat prefers a's format.
 func constraintFormat(a, b version.Constraint) version.Format {
 	if a != nil {
 		if f := a.Format(); f != version.UnknownFormat {

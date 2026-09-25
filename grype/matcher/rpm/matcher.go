@@ -67,8 +67,6 @@ func (m *Matcher) Match(vp vulnerability.Provider, p pkg.Package) ([]match.Match
 
 	switch {
 	case shouldUseAlmaLinuxMatching(p.Distro):
-		// searches RHEL disclosures for the binary and its upstreams, then filters with AlmaLinux
-		// unaffected records
 		almaMatches, ignores, err := m.matchAlmaLinux(vp, p)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to match AlmaLinux: %w", err)
@@ -134,8 +132,8 @@ func (m *Matcher) matchAlmaLinux(vp vulnerability.Provider, p pkg.Package) ([]ma
 	return almaLinuxMatchesWithUpstreams(provider, binaryPkg)
 }
 
-// matchRedhatEUS runs the EUS disclosure/resolution search for the binary package and each package it
-// was built from, all against one result provider so upstream matches are recorded as indirect.
+// matchRedhatEUS searches the binary package and its upstreams with one result provider, so upstream
+// matches are recorded as indirect.
 //
 // Regarding RPM epochs for the binary package... we know that the package and vulnerability will
 // have well-specified epochs since both are sourced from either the RPM DB directly or the upstream
@@ -147,8 +145,7 @@ func (m *Matcher) matchAlmaLinux(vp vulnerability.Provider, p pkg.Package) ([]ma
 // For this reason, to match exactly on a package we should be EXPLICIT about the epoch (since
 // downstream version comparison logic will strip the epoch during comparison for the
 // above-mentioned reasons -- essentially for the source RPM case). To do this, we fill in missing
-// epoch values in the package versions with an explicit 0, on a copy, so the reported package keeps
-// its cataloged version.
+// epoch values in the package versions with an explicit 0, on a copy.
 func (m *Matcher) matchRedhatEUS(vp vulnerability.Provider, p pkg.Package) ([]match.Match, []match.IgnoreFilter, error) {
 	provider := result.NewProvider(vp, p, m.Type())
 
@@ -161,8 +158,7 @@ func (m *Matcher) matchRedhatEUS(vp vulnerability.Provider, p pkg.Package) ([]ma
 	}
 
 	for _, indirectPackage := range pkg.UpstreamPackages(p) {
-		// the upstream is tagged "src" by pkg.UpstreamPackages, so the architecture qualifier
-		// rejects binary-arch records
+		// upstreams are tagged arch "src", so binary-arch records are rejected
 		indirectMatches, ignores, err := m.eusMatches(provider, indirectPackage)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to find vulnerabilities for rpm upstream source package: %w", err)
@@ -185,12 +181,8 @@ func (m *Matcher) eusMatches(provider result.Provider, searchPkg pkg.Package) ([
 	return redhatEUSMatches(provider, searchPkg, m.cfg.MissingEpochStrategy)
 }
 
-// matchDistro searches the binary package and each package it was built from against the distro feed
-// and splits the union once (see internal.FindResultsByDistroAcrossUpstreams).
-//
-// The binary is searched with an explicit epoch on a copy (see matchRedhatEUS), so the reported
-// package keeps its cataloged version. The upstream packages (see pkg.UpstreamPackages) get no
-// epoch, for the reasons below.
+// matchDistro searches the binary package, with an explicit epoch (see matchRedhatEUS), and its
+// upstreams, without one, for the reasons below.
 //
 // Regarding RPM epoch and comparisons... RedHat is explicit that when an RPM
 // epoch is not specified that it should be assumed to be zero (see

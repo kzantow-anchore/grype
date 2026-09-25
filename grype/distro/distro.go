@@ -84,9 +84,8 @@ func parseVersion(version string) (major, minor, remaining, versionWithoutSuffix
 }
 
 // ParseDistroString parses a user-provided distro string in the format "name<separator>version"
-// where separator can be "-", ":", or "@". Known distro IDs that contain a separator (e.g.
-// "opensuse-leap", "rapidfort-ubuntu") are matched first (see splitKnownCompoundID). Returns the
-// distro name and version parts.
+// where separator can be "-", ":", or "@". Known distro IDs containing a separator (e.g.
+// "opensuse-leap", "rapidfort-ubuntu") are matched first.
 func ParseDistroString(s string) (name, version string) {
 	if s == "" {
 		return "", ""
@@ -117,17 +116,18 @@ func ParseDistroString(s string) (name, version string) {
 	return strings.TrimSpace(s[:minIdx]), strings.TrimSpace(s[minIdx+len(foundSep):])
 }
 
+const distroStringSeparators = "-:@"
+
 func isDistroStringSeparator(b byte) bool {
-	return b == '-' || b == ':' || b == '@'
+	return strings.IndexByte(distroStringSeparators, b) >= 0
 }
 
-// splitKnownCompoundID checks whether s begins with a known distro ID that itself contains a
-// separator; if so it returns the longest such ID and whatever follows the next separator.
+// splitKnownCompoundID splits s after the longest known distro ID prefix that contains a separator.
 func splitKnownCompoundID(s string) (name, version string, ok bool) {
 	lower := strings.ToLower(s)
 	var match string
 	for id := range IDMapping {
-		if !strings.ContainsAny(id, "-:@") {
+		if !strings.ContainsAny(id, distroStringSeparators) {
 			continue
 		}
 		if strings.HasPrefix(lower, id) && len(id) > len(match) {
@@ -144,7 +144,7 @@ func splitKnownCompoundID(s string) (name, version string, ok bool) {
 	if isDistroStringSeparator(remaining[0]) {
 		return match, strings.TrimSpace(remaining[1:]), true
 	}
-	// a longer name that only begins with the known ID
+	// a longer name that begins with the known ID
 	return s, "", true
 }
 

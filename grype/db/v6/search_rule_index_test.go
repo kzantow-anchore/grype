@@ -10,7 +10,7 @@ import (
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// linearMatchingRules evaluates every rule in the order it was read, as matchingRules did before the index.
+// linearMatchingRules is the unindexed reference the index must agree with.
 func linearMatchingRules(idx *searchRuleIndex, s searchSubject) []matchedRule {
 	var matched []matchedRule
 	for _, r := range idx.rules {

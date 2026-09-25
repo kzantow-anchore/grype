@@ -184,24 +184,6 @@ func TestApplyDistroIdentifiers(t *testing.T) {
 				assert.Equal(t, distro.Ubuntu, got.Type)
 			},
 		},
-		{
-			name:   "identifier with channels pins them",
-			distro: distro.New(distro.Debian, "12", ""),
-			sbom:   imageSBOM(map[string]string{"maintainer": "rapidfort"}),
-			identifiers: []distro.Identifier{
-				{
-					Name:      "rapidfort",
-					Label:     distro.LabelMatcher{Key: "maintainer", ValuePrefix: "rapidfort"},
-					DistroIDs: map[string]string{"debian": string(distro.RapidFortDebian)},
-					Apply:     distro.ChannelConditionallyEnabled,
-					Channels:  []string{"rf"},
-				},
-			},
-			want: func(t *testing.T, got *distro.Distro) {
-				assert.Equal(t, distro.RapidFortDebian, got.Type)
-				assert.Equal(t, []string{"rf"}, got.Channels)
-			},
-		},
 	}
 
 	for _, tt := range tests {

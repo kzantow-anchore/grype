@@ -7,15 +7,13 @@ import (
 
 var _ vulnerability.Criteria = (*PackageVersionCriteria)(nil)
 
-// PackageVersionCriteria conveys the searched package's version without constraining results: every
-// record matches. Use it when the caller needs records on both sides of the version but the provider
-// needs the version to decide where to search (e.g. search rules keyed on version markers). To
-// constrain results by version, use ByVersion.
+// PackageVersionCriteria states the searched version without constraining results, for providers
+// that choose where to search by version (e.g. search rules). To constrain by version, use ByVersion.
 type PackageVersionCriteria struct {
 	Version version.Version
 }
 
-// WithVersion returns criteria conveying the searched package's version without matching by version ranges
+// WithVersion returns criteria stating the searched version without constraining results.
 func WithVersion(v version.Version) vulnerability.Criteria {
 	return &PackageVersionCriteria{Version: v}
 }

@@ -27,14 +27,10 @@ type Result struct {
 	// Package is the package that was used to search for vulnerabilities.
 	Package *pkg.Package
 
-	// Rank is how authoritatively the result speaks for the package when the results for one
-	// vulnerability disagree (see Rank)
 	Rank Rank
 }
 
-// Derive returns a result for the same vulnerability, package and rank, with no vulnerabilities or
-// details yet: for a result rebuilt from r (e.g. an overlay merged into a disclosure), so it keeps r's
-// standing when results disagree.
+// Derive returns an empty result with r's ID, package and rank.
 func (r Result) Derive() Result {
 	return Result{ID: r.ID, Package: r.Package, Rank: r.Rank}
 }
@@ -282,8 +278,7 @@ func (s Set) Map(fn func(r *Result)) Set {
 	return out
 }
 
-// Filter keeps the records matching every criteria. A version criteria here cannot distinguish a
-// record fixed at this version from one for another release line; use SplitVulnerable for that.
+// Filter keeps the records matching every criteria. To split by version, use internal.SplitVulnerable.
 func (s Set) Filter(criteria ...vulnerability.Criteria) Set {
 	out := Set{}
 	for id, results := range s {

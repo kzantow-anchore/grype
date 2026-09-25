@@ -12,24 +12,13 @@ import (
 	"github.com/anchore/grype/grype/vulnerability"
 )
 
-// Search rules (see v6.SearchRule) state which OperatingSystem rows (a release channel, another
-// vendor's OS name) and which additional names a package is searched with. The provider resolves the
-// rules into v6.SearchRewrites; this file turns those into the searches to run in place of
-// one criteria set.
-//
-// The package's own search always runs; rewrites add to it. Each search records the stream it reads
-// on the results it produces (see Rank): a stream selected for this build outranks the package's own
-// rows.
-
-// ruledSearch is one store search to run for a criteria set.
 type ruledSearch struct {
 	criteria []vulnerability.Criteria
 	stream   Stream
 }
 
-// applySearchRules returns the searches to run for one criteria set: none when the rewrites exclude
-// the partition it reads, the search as made when there are no rewrites. Rules are evaluated against
-// the criteria the search carries (see ruleCriteria).
+// applySearchRules expands one criteria set into the searches the rules call for: the original plus
+// any rewrites, or none when the rules exclude it.
 func applySearchRules(vp vulnerability.Provider, catalogedPkg pkg.Package, cs []vulnerability.Criteria) []ruledSearch {
 	own := []ruledSearch{{criteria: cs, stream: StreamOwn}}
 
@@ -42,8 +31,8 @@ func applySearchRules(vp vulnerability.Provider, catalogedPkg pkg.Package, cs []
 
 	rw := rp.SearchRewrites(ruleCriteria(catalogedPkg, cs))
 	if distroIdx < 0 && catalogedPkg.Distro != nil && slices.ContainsFunc(cs, isCPECriteria) {
-		// an OS-less partition search (by CPE, the NVD records) for a package on an OS: the rewrites'
-		// OS rows extend the package's own OS searches, so only the exclusion applies
+		// a CPE search for an OS package: rewritten OS rows are searched by the OS search, so only
+		// the exclusion applies
 		if rw.ExcludeOSLess {
 			return nil
 		}
@@ -62,8 +51,7 @@ func applySearchRules(vp vulnerability.Provider, catalogedPkg pkg.Package, cs []
 	return fanOutNames(out.searches, rw.PackageNames, nameIdx)
 }
 
-// ruledSearchSet accumulates searches, dropping those reading the same OS rows as an earlier one (an
-// overlay whose channel expanded empty reads the package's own rows); the first keeps its stream.
+// ruledSearchSet drops searches that read the same OS rows as an earlier one.
 type ruledSearchSet struct {
 	searches []ruledSearch
 	seen     map[string]struct{}
@@ -81,7 +69,6 @@ func (s *ruledSearchSet) add(cs []vulnerability.Criteria, distroIdx int, stream 
 	s.searches = append(s.searches, ruledSearch{criteria: cs, stream: stream})
 }
 
-// searchKey identifies the OS rows a search reads.
 func searchKey(cs []vulnerability.Criteria, distroIdx int) string {
 	if distroIdx < 0 {
 		return ""
@@ -97,9 +84,8 @@ func searchKey(cs []vulnerability.Criteria, distroIdx int) string {
 	return strings.Join(out, "|")
 }
 
-// ruleCriteria is cs with what the search does not state but the rules read, taken from the
-// cataloged package: its ecosystem (an OS search carries none), and on a CPE search, which carries no
-// name, version or OS, the package's own. These criteria only select rules; they are never searched.
+// ruleCriteria adds what the rules read but cs lacks, from the cataloged package: the ecosystem, and
+// for a CPE search the name, version and OS. Used only to select rules, never searched.
 func ruleCriteria(catalogedPkg pkg.Package, cs []vulnerability.Criteria) []vulnerability.Criteria {
 	var extra []vulnerability.Criteria
 	if !slices.ContainsFunc(cs, isEcosystemCriteria) {
@@ -125,7 +111,6 @@ func isEcosystemCriteria(c vulnerability.Criteria) bool {
 	return ok
 }
 
-// searchDimensions locates the distro and name criteria a rewrite replaces.
 func searchDimensions(criteria []vulnerability.Criteria) (distroIdx, nameIdx int) {
 	distroIdx, nameIdx = -1, -1
 	for i, c := range criteria {
@@ -141,14 +126,12 @@ func searchDimensions(criteria []vulnerability.Criteria) (distroIdx, nameIdx int
 	return distroIdx, nameIdx
 }
 
-// withDistro is the criteria set with its distro criteria replaced by d, or gaining one if it had none.
 func withDistro(cs []vulnerability.Criteria, distroIdx int, d distro.Distro) []vulnerability.Criteria {
 	out := slices.Clone(cs)
 	dc := &search.DistroCriteria{Distros: []distro.Distro{d}}
 	if distroIdx < 0 {
 		return append(out, dc)
 	}
-	// keep the original search's aliasing
 	if original, ok := cs[distroIdx].(*search.DistroCriteria); ok {
 		dc.Exact = original.Exact
 	}
@@ -156,9 +139,8 @@ func withDistro(cs []vulnerability.Criteria, distroIdx int, d distro.Distro) []v
 	return out
 }
 
-// fanOutNames adds a copy of every search under every additional name the rewrites contribute.
-// Derived names are not re-expanded. Only the first search keeps the CPE criteria, since rewrites
-// never change it and every other search would read the same CPE rows again.
+// fanOutNames adds a copy of every search per additional name. Only the first search keeps its CPE
+// criteria, since the copies would read the same CPE rows again.
 func fanOutNames(searches []ruledSearch, names []string, nameIdx int) []ruledSearch {
 	if nameIdx < 0 {
 		names = nil
@@ -175,24 +157,14 @@ func fanOutNames(searches []ruledSearch, names []string, nameIdx int) []ruledSea
 		}
 	}
 
-	for i := range out {
-		if i == 0 {
-			continue
-		}
+	for i := 1; i < len(out); i++ {
 		out[i].criteria = withoutCPECriteria(out[i].criteria)
 	}
 	return out
 }
 
 func withoutCPECriteria(cs []vulnerability.Criteria) []vulnerability.Criteria {
-	out := make([]vulnerability.Criteria, 0, len(cs))
-	for _, c := range cs {
-		if isCPECriteria(c) {
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
+	return slices.DeleteFunc(slices.Clone(cs), isCPECriteria)
 }
 
 func isCPECriteria(c vulnerability.Criteria) bool {

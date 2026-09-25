@@ -493,13 +493,10 @@ func applyDistroHint(hint string) *distro.Distro {
 	return distro.NewFromNameVersion(name, version)
 }
 
-// getDistroIdentifiers overlays the CLI options onto the default identifier rules.
 func getDistroIdentifiers(idOpts options.DistroIdentifiers) []distro.Identifier {
 	defaults := distro.DefaultIdentifiers()
-	for i := range defaults {
-		if defaults[i].Name == "rapidfort" {
-			defaults[i].Apply = distro.FixChannelEnabled(idOpts.RapidFort.Apply)
-		}
+	if rapidfort := defaults.Get(distro.RapidFortIdentifier); rapidfort != nil {
+		rapidfort.Apply = distro.FixChannelEnabled(idOpts.RapidFort.Apply)
 	}
 	return defaults
 }

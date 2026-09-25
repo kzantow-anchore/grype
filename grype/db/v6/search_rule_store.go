@@ -19,8 +19,6 @@ func newSearchRuleStore(db *gorm.DB) *searchRuleStore {
 	return &searchRuleStore{db: db}
 }
 
-// GetSearchRules returns all search rules in no particular order. A DB built before the table existed
-// returns nil, nil, and the caller falls back to KnownSearchRules.
 func (s *searchRuleStore) GetSearchRules() ([]SearchRule, error) {
 	if !s.db.Migrator().HasTable(&SearchRule{}) {
 		return nil, nil

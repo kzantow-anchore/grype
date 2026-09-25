@@ -14,43 +14,35 @@ type DistroIdentifiers struct {
 }
 
 type DistroIdentifier struct {
-	// Apply indicates whether the identifier should be applied
 	Apply string `yaml:"apply" json:"apply" mapstructure:"apply"`
 }
 
 func (o *DistroIdentifier) PostLoad() error {
+	o.Apply = strings.ToLower(o.Apply)
 	if o.Apply == "" {
 		o.Apply = string(distro.ChannelConditionallyEnabled)
 	}
 
-	switch strings.ToLower(o.Apply) {
-	case string(distro.ChannelNeverEnabled), string(distro.ChannelConditionallyEnabled):
+	switch distro.FixChannelEnabled(o.Apply) {
+	case distro.ChannelNeverEnabled, distro.ChannelConditionallyEnabled:
 		return nil
 	default:
-		return fmt.Errorf("apply %q valid values are 'never' or 'auto' (applied when source metadata indicates the identifier)", o.Apply)
+		return fmt.Errorf("invalid apply value %q: must be 'never' or 'auto'", o.Apply)
 	}
 }
 
 func DefaultDistroIdentifiers() DistroIdentifiers {
-	var rapidfort *distro.Identifier
-	for _, o := range distro.DefaultIdentifiers() {
-		if o.Name == "rapidfort" {
-			rapidfort = &o
-			break
-		}
-	}
+	rapidfort := distro.DefaultIdentifiers().Get(distro.RapidFortIdentifier)
 	if rapidfort == nil {
-		panic("default distro identifiers do not contain the rapidfort rule")
+		panic("default distro identifiers do not contain the rapidfort identifier")
 	}
 
 	return DistroIdentifiers{
-		RapidFort: DistroIdentifier{
-			Apply: string(rapidfort.Apply),
-		},
+		RapidFort: DistroIdentifier{Apply: string(rapidfort.Apply)},
 	}
 }
 
 func (o *DistroIdentifiers) DescribeFields(descriptions clio.FieldDescriptionSet) {
-	descriptions.Add(&o.RapidFort, `whether to remap the detected distro of RapidFort-curated images to the rapidfort-specific vulnerability data`)
-	descriptions.Add(&o.RapidFort.Apply, `whether the identifier should be applied, options are "never" or "auto" (applied when image labels indicate a RapidFort-curated image)`)
+	descriptions.Add(&o.RapidFort, `remap the detected distro of RapidFort-curated images to RapidFort vulnerability data`)
+	descriptions.Add(&o.RapidFort.Apply, `when to apply: "never" or "auto" (when image labels or marker files indicate a RapidFort-curated image)`)
 }

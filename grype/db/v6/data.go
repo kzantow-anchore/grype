@@ -111,14 +111,13 @@ func KnownOperatingSystemSpecifierOverrides() []OperatingSystemSpecifierOverride
 	}
 }
 
-// a version marker names the stream a package was built in, so it outranks the rf- name prefix,
-// which only names the advisory file the package appears in
 const (
 	rapidfortAlpineDistro = "rapidfort-alpine"
 	rapidfortDebianDistro = "rapidfort-debian"
 	rapidfortRedhatDistro = "rapidfort-redhat"
 	rapidfortUbuntuDistro = "rapidfort-ubuntu"
 
+	// a version marker names the stream a package was built in, so it outranks the rf- name prefix
 	priorityRapidFortRebuildMarker = 30
 	priorityRapidFortDistTag       = 20
 	priorityRapidFortNameMarker    = 10
@@ -127,16 +126,14 @@ const (
 	rapidfortDpkgRebuildMarker = `.*(?:rfubu|rfdeb).*|.*[.+~-]rf(?:[._].*)?`
 )
 
-// KnownSearchRules are the built-in search rules: which OS rows, channels and additional names a
-// package is searched with (see SearchRule). Patterns are anchored when compiled (^pattern$), so
-// partial matches need an explicit `.*`; replacements reference named groups as ${name}.
+// KnownSearchRules are the built-in search rules, used when the DB has no search_rules table.
+// Patterns are anchored, so partial matches need an explicit `.*`.
 func KnownSearchRules() []SearchRule {
 	return []SearchRule{
 		// rapidfort-redhat: .rf versions search the rf channel; native elN versions are channel-less
 		{MatchDistroName: rapidfortRedhatDistro, MatchPackageVersion: `.*\.rf(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 
-		// rapidfort dpkg rebuilds search the rf channel. There is no rf- name rule for dpkg: rf- names
-		// appear in both streams, so only the version decides
+		// no rf- name rule for dpkg: rf- names appear in both streams
 		{MatchDistroName: rapidfortUbuntuDistro, MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 		{MatchDistroName: rapidfortDebianDistro, MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 
@@ -146,12 +143,10 @@ func KnownSearchRules() []SearchRule {
 		// rf- name fallback; elN versions have no rule to outrank it, so they are excluded here
 		{MatchDistroName: rapidfortRedhatDistro, MatchPackageName: `rf-.*`, ExcludePackageVersion: `.*\.el\d+(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortNameMarker},
 
-		// rapidfort-alpine data carries disclosures and fixes, so apk packages are not searched in the
-		// OS-less (NVD) partition; a rule with no substitution states this
+		// rapidfort-alpine data is complete, so NVD is not searched
 		{MatchDistroName: rapidfortAlpineDistro, MatchEcosystem: "apk"},
 
-		// echo-patched debian packages also search echo; echo publishes only fixes, so debian data is
-		// still searched
+		// echo publishes only fixes, so debian data is still searched
 		{MatchEcosystem: "deb", MatchPackageVersion: `.*[.-]echo.*`, ReplacementDistroName: ptr("echo")},
 	}
 }
