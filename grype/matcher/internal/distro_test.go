@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/grype/grype/distro"
+	"github.com/anchore/grype/grype/internal/ignorereasons"
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/matcher/internal/result"
 	"github.com/anchore/grype/grype/pkg"
@@ -333,7 +334,7 @@ func TestMatchPackageByDistroWithIgnoreRules(t *testing.T) {
 				require.True(t, ok, "expected IgnoreRule or IgnoreRelatedPackage types")
 				gotVulnIDs.Add(rule.Vulnerability)
 				assert.True(t, rule.IncludeAliases, "expected IncludeAliases to be true")
-				assert.Contains(t, rule.Reason, "DistroPackageFixed")
+				assert.Contains(t, rule.Reason, ignorereasons.DistroFixed)
 				assert.NotEmpty(t, rule.Package.Location, "expected location to be set")
 			}
 

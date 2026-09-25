@@ -83,11 +83,14 @@ var All = []Type{
 	RapidFortRedHat,
 }
 
+// rhelOSReleaseID is the /etc/os-release ID for Red Hat Enterprise Linux (the Type is "redhat")
+const rhelOSReleaseID = "rhel"
+
 // IDMapping maps a distro ID from the /etc/os-release (e.g. like "ubuntu") to a Distro type.
 var IDMapping = map[string]Type{
 	"debian":        Debian,
-	"ubuntu":        Ubuntu,
-	"rhel":          RedHat,
+	string(Ubuntu):  Ubuntu,
+	rhelOSReleaseID: RedHat,
 	"centos":        CentOS,
 	"fedora":        Fedora,
 	"alpine":        Alpine,

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/anchore/grype/grype/internal/ignorereasons"
 	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/matcher/internal/result"
 	"github.com/anchore/grype/grype/pkg"
@@ -137,7 +138,7 @@ func MatchPackageByDistro(provider vulnerability.Provider, searchPkg pkg.Package
 	}
 
 	// Use the SBOM package (not the synthetic upstream) for file ownership — the upstream package doesn't have file metadata.
-	ignores := OwnershipIgnores(matchPackage(searchPkg, catalogPkg), "DistroPackageFixed", notVulnerable.Vulnerabilities()...)
+	ignores := OwnershipIgnores(matchPackage(searchPkg, catalogPkg), ignorereasons.DistroFixed, notVulnerable.Vulnerabilities()...)
 
 	return vulnerable.ToMatches(), ignores, nil
 }
