@@ -8,7 +8,6 @@ import (
 	"github.com/anchore/grype/grype/distro"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/search"
-	"github.com/anchore/grype/grype/version"
 	"github.com/anchore/grype/grype/vulnerability"
 )
 
@@ -28,9 +27,16 @@ func applySearchRules(vp vulnerability.Provider, catalogedPkg pkg.Package, cs []
 	}
 
 	distroIdx, nameIdx := searchDimensions(cs)
+	isCPESearch := slices.ContainsFunc(cs, isCPECriteria)
 
-	rw := rp.SearchRewrites(ruleCriteria(catalogedPkg, cs))
-	if distroIdx < 0 && catalogedPkg.Distro != nil && slices.ContainsFunc(cs, isCPECriteria) {
+	subject := searchPackage(cs, catalogedPkg)
+	if distroIdx < 0 && !isCPESearch {
+		// an ecosystem search reads no OS rows, whatever OS the package was found on
+		subject.Distro = nil
+	}
+
+	rw := rp.SearchRewrites(subject)
+	if distroIdx < 0 && subject.Distro != nil {
 		// a CPE search for an OS package: rewritten OS rows are searched by the OS search, so only
 		// the exclusion applies
 		if rw.ExcludeOSLess {
@@ -84,31 +90,15 @@ func searchKey(cs []vulnerability.Criteria, distroIdx int) string {
 	return strings.Join(out, "|")
 }
 
-// ruleCriteria adds what the rules read but cs lacks, from the cataloged package: the ecosystem, and
-// for a CPE search the name, version and OS. Used only to select rules, never searched.
-func ruleCriteria(catalogedPkg pkg.Package, cs []vulnerability.Criteria) []vulnerability.Criteria {
-	var extra []vulnerability.Criteria
-	if !slices.ContainsFunc(cs, isEcosystemCriteria) {
-		extra = append(extra, search.ByEcosystem(catalogedPkg.Language, catalogedPkg.Type))
-	}
-	if slices.ContainsFunc(cs, isCPECriteria) {
-		extra = append(extra, search.ByPackageName(catalogedPkg.Name))
-		if catalogedPkg.Version != "" {
-			extra = append(extra, search.WithVersion(*version.New(catalogedPkg.Version, pkg.VersionFormat(catalogedPkg))))
-		}
-		if catalogedPkg.Distro != nil {
-			extra = append(extra, search.ByDistro(*catalogedPkg.Distro))
+// searchPackage returns the package cs states it searches for (see search.WithPackage), else the
+// cataloged package.
+func searchPackage(cs []vulnerability.Criteria, catalogedPkg pkg.Package) pkg.Package {
+	for _, c := range cs {
+		if pc, ok := c.(*search.PackageCriteria); ok {
+			return pc.Package
 		}
 	}
-	if len(extra) == 0 {
-		return cs
-	}
-	return append(slices.Clone(cs), extra...)
-}
-
-func isEcosystemCriteria(c vulnerability.Criteria) bool {
-	_, ok := c.(*search.EcosystemCriteria)
-	return ok
+	return catalogedPkg
 }
 
 func searchDimensions(criteria []vulnerability.Criteria) (distroIdx, nameIdx int) {
@@ -119,7 +109,7 @@ func searchDimensions(criteria []vulnerability.Criteria) (distroIdx, nameIdx int
 			if distroIdx < 0 {
 				distroIdx = i
 			}
-		case *search.PackageNameCriteria, *search.IndirectPackageNameCriteria:
+		case *search.PackageNameCriteria, *search.SourcePackageNameCriteria:
 			nameIdx = i
 		}
 	}

@@ -8,20 +8,20 @@ import (
 	"strings"
 
 	"github.com/anchore/grype/grype/distro"
-	"github.com/anchore/grype/grype/search"
-	"github.com/anchore/grype/grype/vulnerability"
+	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/internal/log"
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// Rules are evaluated against the criteria of one search, not the cataloged package, since matchers
-// search under other names and versions (upstreams, rootio names, epoch-patched rpm versions). A
-// predicate on something the criteria do not state does not match.
+// Rules are evaluated against the package one search is for, which is not always the cataloged
+// package: matchers search under other names and versions (upstreams, rootio names, epoch-patched rpm
+// versions). A predicate on something the package does not state does not match.
 
 // SearchRuleProvider is implemented by providers that evaluate search rules.
 type SearchRuleProvider interface {
-	// SearchRewrites returns the zero value when no rule applies.
-	SearchRewrites(criteria []vulnerability.Criteria) SearchRewrites
+	// SearchRewrites returns the zero value when no rule applies. p.Distro is the OS searched, nil for
+	// a search that reads no OS rows.
+	SearchRewrites(p pkg.Package) SearchRewrites
 }
 
 // SearchRewrites is the combined outcome of the search rules that apply to one search.
@@ -199,42 +199,15 @@ type searchSubject struct {
 	distro    *distro.Distro
 }
 
-// searchSubjects returns one subject per searched OS, or one with no OS. The last criterion of each
-// kind wins.
-func searchSubjects(criteria []vulnerability.Criteria) []searchSubject {
-	var subject searchSubject
-	var distros []distro.Distro
-	for _, c := range criteria {
-		switch c := c.(type) {
-		case *search.PackageNameCriteria:
-			subject.name = c.PackageName
-		case *search.IndirectPackageNameCriteria:
-			subject.name = c.PackageName
-		case *search.VersionCriteria:
-			subject.version = c.Version.Raw
-		case *search.PackageVersionCriteria:
-			subject.version = c.Version.Raw
-		case *search.EcosystemCriteria:
-			switch {
-			case c.PackageType != "" && c.PackageType != syftPkg.UnknownPkg:
-				subject.ecosystem = string(c.PackageType)
-			case c.Language != "":
-				subject.ecosystem = string(c.Language)
-			}
-		case *search.DistroCriteria:
-			distros = append(distros, c.Distros...)
-		}
+func searchSubjectOf(p pkg.Package) searchSubject {
+	s := searchSubject{name: p.Name, version: p.Version, distro: p.Distro}
+	switch {
+	case p.Type != "" && p.Type != syftPkg.UnknownPkg:
+		s.ecosystem = string(p.Type)
+	case p.Language != "":
+		s.ecosystem = string(p.Language)
 	}
-	if len(distros) == 0 {
-		return []searchSubject{subject}
-	}
-	out := make([]searchSubject, 0, len(distros))
-	for i := range distros {
-		s := subject
-		s.distro = &distros[i]
-		out = append(out, s)
-	}
-	return out
+	return s
 }
 
 // ruleMatch holds what a matching rule's patterns captured.
@@ -373,24 +346,23 @@ func (r *compiledSearchRule) expandPackageName(m *ruleMatch) string {
 	return r.name.expand(m.nameGroups, m.named)
 }
 
-func (idx *searchRuleIndex) rewrites(criteria []vulnerability.Criteria) SearchRewrites {
+func (idx *searchRuleIndex) rewrites(p pkg.Package) SearchRewrites {
 	var out SearchRewrites
 	includeOSLess := false
-	for _, s := range searchSubjects(criteria) {
-		for _, rm := range highestPriority(matchingRules(idx, s)) {
-			r := rm.rule
-			switch {
-			case r.row.isDistrolessSearch():
-				includeOSLess = true
-			case !r.row.hasSubstitution():
-				out.ExcludeOSLess = true
-			}
-			if d := r.overlayDistro(s, rm.match); d != nil {
-				out.Distros = append(out.Distros, *d)
-			}
-			if name := r.expandPackageName(rm.match); name != "" && name != s.name && !slices.Contains(out.PackageNames, name) {
-				out.PackageNames = append(out.PackageNames, name)
-			}
+	s := searchSubjectOf(p)
+	for _, rm := range highestPriority(matchingRules(idx, s)) {
+		r := rm.rule
+		switch {
+		case r.row.isDistrolessSearch():
+			includeOSLess = true
+		case !r.row.hasSubstitution():
+			out.ExcludeOSLess = true
+		}
+		if d := r.overlayDistro(s, rm.match); d != nil {
+			out.Distros = append(out.Distros, *d)
+		}
+		if name := r.expandPackageName(rm.match); name != "" && name != s.name && !slices.Contains(out.PackageNames, name) {
+			out.PackageNames = append(out.PackageNames, name)
 		}
 	}
 	if includeOSLess {

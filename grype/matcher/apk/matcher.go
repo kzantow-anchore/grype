@@ -113,8 +113,9 @@ func (m *Matcher) nakIgnores(vp vulnerability.Provider, p pkg.Package) ([]match.
 		}
 		upstreamNaks, err := provider.FindResults(
 			search.ByDistro(*upstreamPkg.Distro),
-			search.ByIndirectPackageName(upstreamPkg.Name),
+			search.BySourcePackageName(upstreamPkg.Name),
 			nakConstraint,
+			search.WithPackage(upstreamPkg),
 		)
 		if err != nil {
 			return nil, err

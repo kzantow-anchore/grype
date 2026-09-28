@@ -87,7 +87,7 @@ func (p provider) FindAll(criteria ...vulnerability.Criteria) (Set, error) {
 
 func detailProvider(matcher match.MatcherType, catalogedPkg pkg.Package, criteriaSet []vulnerability.Criteria, vuln vulnerability.Vulnerability) match.Details {
 	cpeParams, distroParams, ecosystemParams, pkgParams := extractSearchParameters(criteriaSet, vuln, catalogedPkg)
-	distroMatchType := determineMatchType(catalogedPkg, pkgParams, slices.ContainsFunc(criteriaSet, isIndirectPackageName))
+	distroMatchType := determineMatchType(catalogedPkg, pkgParams, slices.ContainsFunc(criteriaSet, isSourcePackageName))
 	applyPackageParamsToSearchParams(pkgParams, &cpeParams, &distroParams, &ecosystemParams)
 	constraintStr := getConstraintString(vuln)
 	// the vulnerable Go symbols the package was found to use; empty for every non-Go match and for
@@ -108,7 +108,7 @@ func extractSearchParameters(criteriaSet []vulnerability.Criteria, vuln vulnerab
 
 	for i := range criteriaSet {
 		switch c := criteriaSet[i].(type) {
-		case *search.PackageNameCriteria, *search.IndirectPackageNameCriteria:
+		case *search.PackageNameCriteria, *search.SourcePackageNameCriteria:
 			if pkgParams == nil {
 				pkgParams = &match.PackageParameter{}
 			}
@@ -120,12 +120,12 @@ func extractSearchParameters(criteriaSet []vulnerability.Criteria, vuln vulnerab
 			}
 			pkgParams.Version = c.Version.Raw
 
-		case *search.PackageVersionCriteria:
+		case *search.PackageCriteria:
 			// read back by internal.SplitVulnerable
 			if pkgParams == nil {
 				pkgParams = &match.PackageParameter{}
 			}
-			pkgParams.Version = c.Version.Raw
+			pkgParams.Version = c.Package.Version
 
 		case *search.EcosystemCriteria:
 			ecosystemParams = append(ecosystemParams, match.EcosystemParameters{
@@ -173,7 +173,7 @@ func determineMatchType(catalogedPkg pkg.Package, pkgParams *match.PackageParame
 	return match.ExactDirectMatch
 }
 
-func isIndirectPackageName(c vulnerability.Criteria) bool {
+func isSourcePackageName(c vulnerability.Criteria) bool {
 	_, indirect, _ := search.PackageNameOf(c)
 	return indirect
 }

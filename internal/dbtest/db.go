@@ -41,9 +41,9 @@ var _ vulnerability.EOLChecker = &DB{}
 
 var _ v6.SearchRuleProvider = &DB{}
 
-func (db *DB) SearchRewrites(criteria []vulnerability.Criteria) v6.SearchRewrites {
+func (db *DB) SearchRewrites(p grypePkg.Package) v6.SearchRewrites {
 	if rp, ok := db.provider.(v6.SearchRuleProvider); ok {
-		return rp.SearchRewrites(criteria)
+		return rp.SearchRewrites(p)
 	}
 	return v6.SearchRewrites{}
 }

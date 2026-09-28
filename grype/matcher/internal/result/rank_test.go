@@ -55,7 +55,7 @@ func TestResult_Derive_KeepsRank(t *testing.T) {
 
 // A package that is its own upstream is searched under its own name, so only the search can say its
 // upstream records are indirect; their details and rank must say so too.
-func TestProvider_IndirectPackageNameSearch(t *testing.T) {
+func TestProvider_SourcePackageNameSearch(t *testing.T) {
 	d := distro.New(distro.Alpine, "3.18", "")
 	vuln := vulnerability.Vulnerability{
 		Reference:   vulnerability.Reference{ID: "CVE-2026-1", Namespace: "alpine:distro:alpine:3.18"},
@@ -72,7 +72,7 @@ func TestProvider_IndirectPackageNameSearch(t *testing.T) {
 		want     match.Type
 	}{
 		{name: "own name", criteria: search.ByPackageName("busybox"), want: match.ExactDirectMatch},
-		{name: "own name, searched as an upstream", criteria: search.ByIndirectPackageName("busybox"), want: match.ExactIndirectMatch},
+		{name: "own name, searched as an upstream", criteria: search.BySourcePackageName("busybox"), want: match.ExactIndirectMatch},
 		{name: "another name", criteria: search.ByPackageName("other"), want: match.ExactIndirectMatch},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,8 +87,8 @@ func TestProvider_IndirectPackageNameSearch(t *testing.T) {
 }
 
 func TestFanOutNames_KeepsIndirectness(t *testing.T) {
-	cs := []vulnerability.Criteria{search.ByIndirectPackageName("rf-curl"), search.ByDistro(*distro.New(distro.Debian, "12", ""))}
+	cs := []vulnerability.Criteria{search.BySourcePackageName("rf-curl"), search.ByDistro(*distro.New(distro.Debian, "12", ""))}
 	got := fanOutNames([]ruledSearch{{criteria: cs}}, []string{"curl"}, 0)
 	require.Len(t, got, 2)
-	assert.Equal(t, search.ByIndirectPackageName("curl"), got[1].criteria[0])
+	assert.Equal(t, search.BySourcePackageName("curl"), got[1].criteria[0])
 }

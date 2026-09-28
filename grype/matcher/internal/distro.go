@@ -73,7 +73,7 @@ func FindResultsByDistroAcrossUpstreams(provider vulnerability.Provider, searchP
 		}
 
 		// indirect even when the upstream has the package's own name
-		found, err := applicableForDistro(provider, rp, upstreamPkg, distroVersion(upstreamPkg, cfg), search.ByIndirectPackageName)
+		found, err := applicableForDistro(provider, rp, upstreamPkg, distroVersion(upstreamPkg, cfg), search.BySourcePackageName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -88,11 +88,13 @@ func FindResultsByDistroAcrossUpstreams(provider vulnerability.Provider, searchP
 func applicableForDistro(provider vulnerability.Provider, rp result.Provider, searchPkg pkg.Package, pkgVersion *version.Version, byName func(string) vulnerability.Criteria) (result.Set, error) {
 	applicable := result.Set{}
 	for _, name := range provider.PackageSearchNames(searchPkg) {
+		searched := searchPkg
+		searched.Name = name
 		v, err := rp.FindAll(
 			byName(name),
 			search.ByDistro(*searchPkg.Distro),
 			OnlyQualifiedPackages(searchPkg),
-			search.WithVersion(*pkgVersion),
+			search.WithPackage(searched),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("matcher failed to fetch distro=%q pkg=%q: %w", searchPkg.Distro, name, err)

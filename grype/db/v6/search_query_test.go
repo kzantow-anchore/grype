@@ -31,7 +31,7 @@ func TestNewSearchCriteria(t *testing.T) {
 		{
 			name: "indirect package name criteria is searched as a package name",
 			criteria: []vulnerability.Criteria{
-				search.ByIndirectPackageName("test-package"),
+				search.BySourcePackageName("test-package"),
 			},
 			validate: func(t *testing.T, input *searchQuery) {
 				require.NotNil(t, input.pkgSpec)

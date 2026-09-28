@@ -8,9 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/grype/grype/distro"
-	"github.com/anchore/grype/grype/search"
+	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/version"
-	"github.com/anchore/grype/grype/vulnerability"
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
@@ -170,13 +169,20 @@ func TestKnownSearchRules_AllValid(t *testing.T) {
 	assert.Len(t, rules.rules, len(KnownSearchRules()), "every built-in rule must compile")
 }
 
-// searchOf states a search as a matcher makes it: a name, a version and an OS or ecosystem.
-func searchOf(name, ver string, format version.Format, extra ...vulnerability.Criteria) []vulnerability.Criteria {
-	cs := []vulnerability.Criteria{search.ByPackageName(name)}
-	if ver != "" {
-		cs = append(cs, search.WithVersion(*version.New(ver, format)))
+// searchOf states the package a search is for: a name, a version and the OS searched and/or ecosystem.
+func searchOf(name, ver string, where ...any) pkg.Package {
+	p := pkg.Package{Name: name, Version: ver}
+	for _, w := range where {
+		switch w := w.(type) {
+		case distro.Distro:
+			p.Distro = &w
+		case syftPkg.Type:
+			p.Type = w
+		case syftPkg.Language:
+			p.Language = w
+		}
 	}
-	return append(cs, extra...)
+	return p
 }
 
 func rulesProvider(rows ...SearchRule) vulnerabilityProvider {
@@ -188,7 +194,7 @@ func TestVulnerabilityProvider_SearchRewrites_KnownRules(t *testing.T) { //nolin
 	rfRedhat := *distro.New(distro.RapidFortRedHat, "9", "")
 	rfUbuntu := *distro.New(distro.RapidFortUbuntu, "22.04", "")
 	rfAlpine := *distro.New(distro.RapidFortAlpine, "3.18", "")
-	apk := search.ByEcosystem(syftPkg.UnknownLanguage, syftPkg.ApkPkg)
+	apk := syftPkg.ApkPkg
 
 	channels := func(rw SearchRewrites) []string {
 		var out []string
@@ -200,88 +206,88 @@ func TestVulnerabilityProvider_SearchRewrites_KnownRules(t *testing.T) { //nolin
 
 	tests := []struct {
 		name     string
-		criteria []vulnerability.Criteria
+		searched pkg.Package
 		want     []string
 		wantExcl bool
 	}{
 		{
 			name:     "rapidfort-redhat rf rebuild marker",
-			criteria: searchOf("curl", "7.76.1-29.el9.rf.1", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("curl", "7.76.1-29.el9.rf.1", rfRedhat),
 			want:     []string{"rapidfort-redhat@9+rf"},
 		},
 		{
 			name:     "rapidfort-redhat fedora dist tag binds the first tag",
-			criteria: searchOf("curl", "7.78.0-3.fc31.fc43", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("curl", "7.78.0-3.fc31.fc43", rfRedhat),
 			want:     []string{"rapidfort-redhat@9+fc31"},
 		},
 		{
 			name:     "the rebuild marker outranks the dist tag",
-			criteria: searchOf("curl", "7.78.0-3.fc43.rf.1", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("curl", "7.78.0-3.fc43.rf.1", rfRedhat),
 			want:     []string{"rapidfort-redhat@9+rf"},
 		},
 		{
 			name:     "rf- name fallback",
-			criteria: searchOf("rf-scanner", "1.0-1", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("rf-scanner", "1.0-1", rfRedhat),
 			want:     []string{"rapidfort-redhat@9+rf"},
 		},
 		{
 			name:     "rf- name with a native el version is channel-less",
-			criteria: searchOf("rf-scanner", "1.0-1.el9", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("rf-scanner", "1.0-1.el9", rfRedhat),
 		},
 		{
 			name:     "rf- name with a dist tag follows the dist tag",
-			criteria: searchOf("rf-scanner", "1.0-1.fc43", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("rf-scanner", "1.0-1.fc43", rfRedhat),
 			want:     []string{"rapidfort-redhat@9+fc43"},
 		},
 		{
 			name:     "native el version",
-			criteria: searchOf("curl", "7.76.1-29.el9", version.RpmFormat, search.ByDistro(rfRedhat)),
+			searched: searchOf("curl", "7.76.1-29.el9", rfRedhat),
 		},
 		{
 			name:     "rapidfort-ubuntu rebuild",
-			criteria: searchOf("curl", "7.81.0-1ubuntu1.15rfubu1", version.DebFormat, search.ByDistro(rfUbuntu)),
+			searched: searchOf("curl", "7.81.0-1ubuntu1.15rfubu1", rfUbuntu),
 			want:     []string{"rapidfort-ubuntu@22.04+rf"},
 		},
 		{
 			name:     "rapidfort-ubuntu pre-release rebuild marker",
-			criteria: searchOf("curl", "7.81.0-1rfubuntu1.15~rf.1", version.DebFormat, search.ByDistro(rfUbuntu)),
+			searched: searchOf("curl", "7.81.0-1rfubuntu1.15~rf.1", rfUbuntu),
 			want:     []string{"rapidfort-ubuntu@22.04+rf"},
 		},
 		{
 			name:     "rapidfort-debian rebuild",
-			criteria: searchOf("curl", "7.88.1-10+rf.1", version.DebFormat, search.ByDistro(*distro.New(distro.RapidFortDebian, "12", ""))),
+			searched: searchOf("curl", "7.88.1-10+rf.1", *distro.New(distro.RapidFortDebian, "12", "")),
 			want:     []string{"rapidfort-debian@12+rf"},
 		},
 		{
 			name:     "rapidfort-debian stock build",
-			criteria: searchOf("curl", "7.88.1-10+deb12u5", version.DebFormat, search.ByDistro(*distro.New(distro.RapidFortDebian, "12", ""))),
+			searched: searchOf("curl", "7.88.1-10+deb12u5", *distro.New(distro.RapidFortDebian, "12", "")),
 		},
 		{
 			name:     "rapidfort-ubuntu stock build",
-			criteria: searchOf("rf-curl", "7.81.0-1ubuntu1.15", version.DebFormat, search.ByDistro(rfUbuntu)),
+			searched: searchOf("rf-curl", "7.81.0-1ubuntu1.15", rfUbuntu),
 		},
 		{
 			name:     "rapidfort-alpine apk states its data is complete",
-			criteria: searchOf("curl", "8.5.0-r0", version.ApkFormat, search.ByDistro(rfAlpine), apk),
+			searched: searchOf("curl", "8.5.0-r0", rfAlpine, apk),
 			wantExcl: true,
 		},
 		{
 			name:     "rapidfort-alpine rule speaks only for apk packages",
-			criteria: searchOf("curl", "8.5.0-r0", version.ApkFormat, search.ByDistro(rfAlpine), search.ByEcosystem(syftPkg.JavaScript, syftPkg.NpmPkg)),
+			searched: searchOf("curl", "8.5.0-r0", rfAlpine, syftPkg.NpmPkg),
 		},
 		{
 			name:     "stock alpine",
-			criteria: searchOf("curl", "8.5.0-r0", version.ApkFormat, search.ByDistro(*distro.New(distro.Alpine, "3.18", "")), apk),
+			searched: searchOf("curl", "8.5.0-r0", *distro.New(distro.Alpine, "3.18", ""), apk),
 		},
 		{
 			name:     "echo marker on debian",
-			criteria: searchOf("curl", "7.88.1-10+deb12u5.echo1", version.DebFormat, search.ByDistro(*distro.New(distro.Debian, "12", "")), search.ByEcosystem(syftPkg.UnknownLanguage, syftPkg.DebPkg)),
+			searched: searchOf("curl", "7.88.1-10+deb12u5.echo1", *distro.New(distro.Debian, "12", ""), syftPkg.DebPkg),
 			want:     []string{"echo@12+"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := vp.SearchRewrites(tt.criteria)
+			got := vp.SearchRewrites(tt.searched)
 			assert.Equal(t, tt.want, channels(got))
 			assert.Equal(t, tt.wantExcl, got.ExcludeOSLess)
 			assert.Empty(t, got.PackageNames)
@@ -289,16 +295,16 @@ func TestVulnerabilityProvider_SearchRewrites_KnownRules(t *testing.T) { //nolin
 	}
 }
 
-// One case per replacement a rule can make, each reached by the search criteria alone.
+// One case per replacement a rule can make, each reached by the searched package alone.
 func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nolint:funlen // one case per replacement type
 	rfRedhat := *distro.New(distro.RapidFortRedHat, "9.4", "")
 	deb := *distro.New(distro.Debian, "12", "")
 	deb.Channels = []string{"x"}
-	debEco := search.ByEcosystem(syftPkg.UnknownLanguage, syftPkg.DebPkg)
+	debEco := syftPkg.DebPkg
 
 	t.Run("channel: literal", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageVersion: `.*\.rf`, ReplacementChannel: ptr("rf")})
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1.rf", version.RpmFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1.rf", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, "rapidfort-redhat", got.Distros[0].Name())
 		assert.Equal(t, "9.4", got.Distros[0].Version, "the searched OS version is kept")
@@ -307,42 +313,42 @@ func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nol
 
 	t.Run("channel: positional group of the version pattern", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageVersion: `.*?\.fc(\d+).*`, ReplacementChannel: ptr("fc$1")})
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1.fc31.fc43", version.RpmFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1.fc31.fc43", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"fc31"}, got.Distros[0].Channels)
 	})
 
 	t.Run("channel: named group of the version pattern", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageVersion: `.*?\.fc(?P<fedora>\d+).*`, ReplacementChannel: ptr("fc${fedora}")})
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1.fc43", version.RpmFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1.fc43", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"fc43"}, got.Distros[0].Channels)
 	})
 
 	t.Run("channel: named group of the distro version pattern", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "rapidfort-redhat", MatchDistroVersion: `(?P<major>\d+)(?:\..*)?`, MatchPackageName: `rf-.*`, ReplacementChannel: ptr("el${major}")})
-		got := vp.SearchRewrites(searchOf("rf-curl", "1.0-1", version.RpmFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("rf-curl", "1.0-1", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"el9"}, got.Distros[0].Channels)
 	})
 
 	t.Run("channel: named group of the name pattern", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `(?P<stream>rf|fips)-.*`, ReplacementChannel: ptr("${stream}")})
-		got := vp.SearchRewrites(searchOf("fips-openssl", "3.0-1", version.RpmFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("fips-openssl", "3.0-1", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"fips"}, got.Distros[0].Channels)
 	})
 
 	t.Run("channel: an empty expansion selects the channel-less rows", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "debian", MatchPackageVersion: `.*?(?:\+(?P<ch>rf))?`, ReplacementChannel: ptr("${ch}")})
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1", version.DebFormat, search.ByDistro(deb)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1", deb))
 		require.Len(t, got.Distros, 1)
 		assert.Empty(t, got.Distros[0].Channels, "the searched OS's own channels are dropped too")
 	})
 
 	t.Run("distro name: literal, on an OS search", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchEcosystem: "deb", MatchPackageVersion: `.*[.-]echo.*`, ReplacementDistroName: ptr("echo")})
-		got := vp.SearchRewrites(searchOf("curl", "7.88.1-10+deb12u5.echo1", version.DebFormat, search.ByDistro(deb), debEco))
+		got := vp.SearchRewrites(searchOf("curl", "7.88.1-10+deb12u5.echo1", deb, debEco))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, "echo", got.Distros[0].Name())
 		assert.Equal(t, "12", got.Distros[0].Version, "the searched OS version is kept")
@@ -352,7 +358,7 @@ func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nol
 
 	t.Run("distro name: literal, on an OS-less search", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchEcosystem: "deb", MatchPackageVersion: `.*[.-]echo.*`, ReplacementDistroName: ptr("echo")})
-		got := vp.SearchRewrites(searchOf("curl", "7.88.1-10+deb12u5.echo1", version.DebFormat, debEco))
+		got := vp.SearchRewrites(searchOf("curl", "7.88.1-10+deb12u5.echo1", debEco))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, "echo", got.Distros[0].Name())
 		assert.Empty(t, got.Distros[0].Version, "an OS-less search gains the OS version-free")
@@ -360,14 +366,14 @@ func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nol
 
 	t.Run("distro name: named group", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchEcosystem: "deb", MatchPackageVersion: `.*[.+-](?P<vendor>echo|minimus)\d*`, ReplacementDistroName: ptr("${vendor}")})
-		got := vp.SearchRewrites(searchOf("curl", "7.88.1-10+deb12u5.echo1", version.DebFormat, search.ByDistro(deb), debEco))
+		got := vp.SearchRewrites(searchOf("curl", "7.88.1-10+deb12u5.echo1", deb, debEco))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, "echo", got.Distros[0].Name())
 	})
 
 	t.Run("distro name and channel together", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "debian", MatchPackageVersion: `.*\+(?P<vendor>echo)(?P<n>\d+)`, ReplacementDistroName: ptr("${vendor}"), ReplacementChannel: ptr("v${n}")})
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1+echo2", version.DebFormat, search.ByDistro(deb)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1+echo2", deb))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, "echo", got.Distros[0].Name())
 		assert.Equal(t, "12", got.Distros[0].Version)
@@ -376,21 +382,21 @@ func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nol
 
 	t.Run("package name: positional group of the name pattern", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "debian", MatchPackageName: `rf-(.+)`, ReplacementPackageName: "$1"})
-		got := vp.SearchRewrites(searchOf("rf-curl", "1.0-1", version.DebFormat, search.ByDistro(deb)))
+		got := vp.SearchRewrites(searchOf("rf-curl", "1.0-1", deb))
 		assert.Equal(t, []string{"curl"}, got.PackageNames)
 		assert.Empty(t, got.Distros)
 	})
 
 	t.Run("package name: named group, on an ecosystem search (rootio shape)", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchEcosystem: "python", MatchPackageName: `rootio[-_](?P<upstream>.+)`, ReplacementPackageName: "${upstream}"})
-		got := vp.SearchRewrites(searchOf("rootio-requests", "2.31.0", version.PythonFormat, search.ByEcosystem(syftPkg.Python, syftPkg.PythonPkg)))
+		got := vp.SearchRewrites(searchOf("rootio-requests", "2.31.0", syftPkg.PythonPkg))
 		assert.Equal(t, []string{"requests"}, got.PackageNames)
 		assert.False(t, got.ExcludeOSLess)
 	})
 
 	t.Run("package name: named group of the version pattern", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchEcosystem: "java-archive", MatchPackageName: `.*`, MatchPackageVersion: `.*\.(?P<flavor>jre\d+)`, ReplacementPackageName: "$0-${flavor}"})
-		got := vp.SearchRewrites(searchOf("guava", "32.1.3.jre8", version.MavenFormat, search.ByEcosystem(syftPkg.Java, syftPkg.JavaPkg)))
+		got := vp.SearchRewrites(searchOf("guava", "32.1.3.jre8", syftPkg.JavaPkg))
 		assert.Equal(t, []string{"guava-jre8"}, got.PackageNames)
 	})
 
@@ -400,13 +406,13 @@ func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nol
 			SearchRule{MatchDistroName: "debian", MatchPackageName: `cu(?P<rest>rl)`, ReplacementPackageName: "cu${rest}"},
 			SearchRule{MatchDistroName: "debian", MatchPackageName: `(?P<n>curl)`, ReplacementPackageName: "rf-cu"},
 		)
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1", version.DebFormat, search.ByDistro(deb)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1", deb))
 		assert.Equal(t, []string{"rf-cu"}, got.PackageNames)
 	})
 
 	t.Run("no substitution: the OS-less partition is excluded", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "debian", MatchPackageName: `curl`})
-		assert.Equal(t, SearchRewrites{ExcludeOSLess: true}, vp.SearchRewrites(searchOf("curl", "1.0-1", version.DebFormat, search.ByDistro(deb))))
+		assert.Equal(t, SearchRewrites{ExcludeOSLess: true}, vp.SearchRewrites(searchOf("curl", "1.0-1", deb)))
 	})
 
 	t.Run("distroless: a rule naming the OS-less partition keeps it searched", func(t *testing.T) {
@@ -415,62 +421,42 @@ func TestVulnerabilityProvider_SearchRewrites_Replacements(t *testing.T) { //nol
 			SearchRule{MatchDistroName: "debian"},
 			SearchRule{MatchDistroName: "debian", ReplacementDistroName: ptr("")},
 		)
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1+rf1", version.DebFormat, search.ByDistro(deb)))
+		got := vp.SearchRewrites(searchOf("curl", "1.0-1+rf1", deb))
 		assert.False(t, got.ExcludeOSLess)
 		require.Len(t, got.Distros, 1, "the OS-less rule adds no store search")
 		assert.Equal(t, []string{"rf"}, got.Distros[0].Channels)
 	})
 }
 
-func TestVulnerabilityProvider_SearchRewrites_Criteria(t *testing.T) { //nolint:funlen // one case per criteria shape
+func TestVulnerabilityProvider_SearchRewrites_Package(t *testing.T) { //nolint:funlen // one case per package shape
 	rfRedhat := *distro.New(distro.RapidFortRedHat, "9", "")
-	rhel := *distro.New(distro.RedHat, "9", "")
 	channelRule := SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `curl`, MatchPackageVersion: `.*\.rf`, ReplacementChannel: ptr("rf")}
 	vp := rulesProvider(channelRule)
 
-	t.Run("the version may constrain results or only be conveyed", func(t *testing.T) {
-		v := *version.New("1.0-1.rf", version.RpmFormat)
-		for _, vc := range []vulnerability.Criteria{search.ByVersion(v), search.WithVersion(v)} {
-			got := vp.SearchRewrites([]vulnerability.Criteria{search.ByPackageName("curl"), search.ByDistro(rfRedhat), vc})
-			assert.Len(t, got.Distros, 1)
-		}
-	})
-
-	t.Run("an indirect package name is the searched name", func(t *testing.T) {
-		got := vp.SearchRewrites([]vulnerability.Criteria{search.ByIndirectPackageName("curl"), search.ByDistro(rfRedhat), search.WithVersion(*version.New("1.0-1.rf", version.RpmFormat))})
-		assert.Len(t, got.Distros, 1)
-	})
-
 	t.Run("a predicate whose subject the search does not state does not match", func(t *testing.T) {
-		assert.Zero(t, vp.SearchRewrites([]vulnerability.Criteria{search.ByPackageName("curl"), search.ByDistro(rfRedhat)}), "no version")
-		assert.Zero(t, vp.SearchRewrites(searchOf("", "1.0-1.rf", version.RpmFormat, search.ByDistro(rfRedhat))), "no name")
-		assert.Zero(t, vp.SearchRewrites(searchOf("curl", "1.0-1.rf", version.RpmFormat)), "no OS")
-	})
-
-	t.Run("each OS of a search is rewritten on its own", func(t *testing.T) {
-		got := vp.SearchRewrites(searchOf("curl", "1.0-1.rf", version.RpmFormat, search.ByDistro(rhel, rfRedhat)))
-		require.Len(t, got.Distros, 1)
-		assert.Equal(t, "rapidfort-redhat", got.Distros[0].Name())
+		assert.Zero(t, vp.SearchRewrites(searchOf("curl", "", rfRedhat)), "no version")
+		assert.Zero(t, vp.SearchRewrites(searchOf("", "1.0-1.rf", rfRedhat)), "no name")
+		assert.Zero(t, vp.SearchRewrites(searchOf("curl", "1.0-1.rf")), "no OS")
 	})
 
 	t.Run("the ecosystem falls back to the language", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchEcosystem: "python", MatchPackageName: `rootio-(.+)`, ReplacementPackageName: "$1"})
-		got := vp.SearchRewrites(searchOf("rootio-requests", "", version.UnknownFormat, search.ByEcosystem(syftPkg.Python, "")))
+		got := vp.SearchRewrites(searchOf("rootio-requests", "", syftPkg.Python))
 		assert.Equal(t, []string{"requests"}, got.PackageNames)
 	})
 
 	t.Run("exclude patterns reject only a present subject", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `rf-.*`, ExcludePackageName: `rf-skip`, ExcludePackageVersion: `.*\.el\d+`, ReplacementChannel: ptr("rf")})
-		assert.Len(t, vp.SearchRewrites(searchOf("rf-curl", "1.0-1", version.RpmFormat, search.ByDistro(rfRedhat))).Distros, 1)
-		assert.Len(t, vp.SearchRewrites(searchOf("rf-curl", "", version.UnknownFormat, search.ByDistro(rfRedhat))).Distros, 1, "no version to exclude")
-		assert.Zero(t, vp.SearchRewrites(searchOf("rf-curl", "1.0-1.el9", version.RpmFormat, search.ByDistro(rfRedhat))))
-		assert.Zero(t, vp.SearchRewrites(searchOf("rf-skip", "1.0-1", version.RpmFormat, search.ByDistro(rfRedhat))))
+		assert.Len(t, vp.SearchRewrites(searchOf("rf-curl", "1.0-1", rfRedhat)).Distros, 1)
+		assert.Len(t, vp.SearchRewrites(searchOf("rf-curl", "", rfRedhat)).Distros, 1, "no version to exclude")
+		assert.Zero(t, vp.SearchRewrites(searchOf("rf-curl", "1.0-1.el9", rfRedhat)))
+		assert.Zero(t, vp.SearchRewrites(searchOf("rf-skip", "1.0-1", rfRedhat)))
 	})
 
 	t.Run("the distro version matches the release, then the label", func(t *testing.T) {
 		vp := rulesProvider(SearchRule{MatchDistroName: "ubuntu", MatchDistroVersion: `(?P<code>jammy)`, MatchPackageName: `.*`, ReplacementChannel: ptr("${code}-rf")})
 		ubuntu := *distro.New(distro.Ubuntu, "22.04", "jammy")
-		got := vp.SearchRewrites(searchOf("curl", "", version.UnknownFormat, search.ByDistro(ubuntu)))
+		got := vp.SearchRewrites(searchOf("curl", "", ubuntu))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"jammy-rf"}, got.Distros[0].Channels)
 	})
@@ -480,7 +466,7 @@ func TestVulnerabilityProvider_SearchRewrites_Criteria(t *testing.T) { //nolint:
 			SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `curl`, ReplacementChannel: ptr("a"), Priority: 2},
 			SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `curl`, ReplacementChannel: ptr("b"), Priority: 1},
 		)
-		got := vp.SearchRewrites(searchOf("curl", "", version.UnknownFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("curl", "", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"a"}, got.Distros[0].Channels)
 	})
@@ -491,7 +477,7 @@ func TestVulnerabilityProvider_SearchRewrites_Criteria(t *testing.T) { //nolint:
 			SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `(cu)rl`, ReplacementPackageName: "rf-$1", Priority: 2},
 			SearchRule{MatchDistroName: "rapidfort-redhat", MatchPackageName: `curl`, ReplacementChannel: ptr("c"), Priority: 1},
 		)
-		got := vp.SearchRewrites(searchOf("curl", "", version.UnknownFormat, search.ByDistro(rfRedhat)))
+		got := vp.SearchRewrites(searchOf("curl", "", rfRedhat))
 		require.Len(t, got.Distros, 1)
 		assert.Equal(t, []string{"a"}, got.Distros[0].Channels)
 		assert.Equal(t, []string{"rf-cu"}, got.PackageNames)

@@ -68,6 +68,7 @@ func ubuntuESMMatches(provider result.Provider, searchPkg pkg.Package, missingEp
 		search.ByPackageName(searchPkg.Name),
 		search.ByDistro(distroWithoutESM), // e.g. ubuntu:16.04 (no ESM channel)
 		internal.OnlyQualifiedPackages(searchPkg),
+		search.WithPackage(searchPkg),
 		internal.OnlyVulnerableVersions(pkgVersion),
 	}
 	disclosureCriteria = append(disclosureCriteria, extra...)
@@ -86,6 +87,7 @@ func ubuntuESMMatches(provider result.Provider, searchPkg pkg.Package, missingEp
 		search.ByPackageName(searchPkg.Name),
 		search.ByDistro(distroWithoutESM, *searchPkg.Distro), // e.g. ubuntu:16.04 || ubuntu:16.04+esm
 		internal.OnlyQualifiedPackages(searchPkg),
+		search.WithPackage(searchPkg),
 		// note: we do **not** apply any version criteria to the search as to raise up all possible fixes
 		// and combine within the collection. If we do filter on a fix version, it could result in
 		// false positives (missing ESM fixes that resolve a disclosure).

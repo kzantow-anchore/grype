@@ -25,11 +25,14 @@ func MatchPackageByLanguage(store vulnerability.Provider, p pkg.Package, matcher
 	// split once across names so a NAK under `rootio-foo` denies a disclosure under `foo`
 	applicable := result.Set{}
 	for _, name := range store.PackageSearchNames(p) {
+		searched := p
+		searched.Name = name
 		found, err := provider.FindAll(
 			search.ByEcosystem(p.Language, p.Type),
 			search.ByPackageName(name),
 			OnlyQualifiedPackages(p),
 			OnlyNonWithdrawnVulnerabilities(),
+			search.WithPackage(searched),
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("matcher failed to fetch disclosure language=%q pkg=%q: %w", p.Language, name, err)
@@ -59,11 +62,14 @@ func MatchPackageByEcosystemPackageName(vp vulnerability.Provider, p pkg.Package
 
 	// TODO: previous impl set confidence to 1, this results in
 	// a confidence of zero. What should it be?
+	searched := p
+	searched.Name = packageName
 	applicable, err := provider.FindAll(
 		search.ByEcosystem(p.Language, p.Type),
 		search.ByPackageName(packageName),
 		OnlyQualifiedPackages(p),
 		OnlyNonWithdrawnVulnerabilities(),
+		search.WithPackage(searched),
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("matcher failed to fetch disclosure language=%q pkg=%q: %w", p.Language, p.Name, err)
