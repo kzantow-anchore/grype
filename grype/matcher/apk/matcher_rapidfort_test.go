@@ -12,8 +12,8 @@ import (
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// rapidfort-alpine data carries disclosures and fixes, so a search rule excludes the OS-less (NVD)
-// partition from the apk matcher's CPE search (see v6.KnownSearchRules). The fixture carries:
+// rapidfort-alpine data carries disclosures and fixes, so a search rule redirects the apk matcher's CPE
+// search to rapidfort-alpine rows in place of NVD's (see v6.KnownSearchRules). The fixture carries:
 //
 //	CVE-2024-2398 / curl: rapidfort-alpine:3.18 fix (8.7.1-r0) and an NVD CPE entry (< 8.7.0)
 //	CVE-2024-2466 / curl: NVD CPE entry only (>= 8.5.0, < 8.8.0)

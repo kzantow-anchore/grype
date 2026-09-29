@@ -5,6 +5,16 @@ import "strings"
 // RapidFortIdentifier is the name of the built-in RapidFort distro identifier.
 const RapidFortIdentifier = "rapidfort"
 
+// IdentifierApply says when an Identifier is applied.
+type IdentifierApply string
+
+const (
+	IdentifierNever IdentifierApply = "never"
+
+	// IdentifierAuto applies the identifier when the source carries its evidence
+	IdentifierAuto IdentifierApply = "auto"
+)
+
 // LabelMatcher matches a container image label by key and value prefix, both case-insensitive.
 type LabelMatcher struct {
 	Key         string
@@ -31,8 +41,7 @@ type Identifier struct {
 	// DistroIDs maps a detected os-release ID (e.g. "ubuntu") to its replacement (e.g. "rapidfort-ubuntu")
 	DistroIDs map[string]string
 
-	// Apply is "auto" (when evidence is present) or "never"
-	Apply FixChannelEnabled
+	Apply IdentifierApply
 }
 
 type Identifiers []Identifier
@@ -62,7 +71,7 @@ func DefaultIdentifiers() Identifiers {
 				"centos":        string(RapidFortRedHat),
 				"fedora":        string(RapidFortRedHat),
 			},
-			Apply: ChannelConditionallyEnabled,
+			Apply: IdentifierAuto,
 		},
 	}
 }

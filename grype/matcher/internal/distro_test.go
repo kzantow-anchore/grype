@@ -92,14 +92,14 @@ func TestFindMatchesByPackageDistro(t *testing.T) {
 	}
 
 	store := newMockProviderByDistro()
-	actual, ignored, err := MatchPackageByDistro(store, p, nil, match.PythonMatcher, nil)
+	actual, ignored, err := MatchPackageByDistro(store, p, match.PythonMatcher, nil)
 	require.NoError(t, err)
 	require.Empty(t, ignored)
 	assertMatchesUsingIDsForVulnerabilities(t, expected, actual)
 
 	// prove we do not search for unknown versions
 	p.Version = "unknown"
-	actual, ignored, err = MatchPackageByDistro(store, p, nil, match.PythonMatcher, nil)
+	actual, ignored, err = MatchPackageByDistro(store, p, match.PythonMatcher, nil)
 	require.NoError(t, err)
 	require.Empty(t, ignored)
 	assert.Empty(t, actual)
@@ -305,7 +305,7 @@ func TestMatchPackageByDistroWithIgnoreRules(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := mock.VulnerabilityProvider(test.vulnerabilities...)
 
-			matches, ignoreFilters, err := MatchPackageByDistro(store, test.pkg, nil, match.PythonMatcher, nil)
+			matches, ignoreFilters, err := MatchPackageByDistro(store, test.pkg, match.PythonMatcher, nil)
 			require.NoError(t, err)
 
 			// verify matches
@@ -394,7 +394,7 @@ func TestFindMatchesByPackageDistroSles(t *testing.T) {
 	}
 
 	store := newMockProviderByDistro()
-	actual, ignored, err := MatchPackageByDistro(store, p, nil, match.PythonMatcher, nil)
+	actual, ignored, err := MatchPackageByDistro(store, p, match.PythonMatcher, nil)
 	assert.NoError(t, err)
 	require.Empty(t, ignored)
 	assertMatchesUsingIDsForVulnerabilities(t, expected, actual)

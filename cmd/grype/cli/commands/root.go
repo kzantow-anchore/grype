@@ -496,7 +496,7 @@ func applyDistroHint(hint string) *distro.Distro {
 func getDistroIdentifiers(idOpts options.DistroIdentifiers) []distro.Identifier {
 	defaults := distro.DefaultIdentifiers()
 	if rapidfort := defaults.Get(distro.RapidFortIdentifier); rapidfort != nil {
-		rapidfort.Apply = distro.FixChannelEnabled(idOpts.RapidFort.Apply)
+		rapidfort.Apply = distro.IdentifierApply(idOpts.RapidFort.Apply)
 	}
 	return defaults
 }

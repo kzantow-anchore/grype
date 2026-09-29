@@ -59,26 +59,3 @@ func Test_ByPackageName(t *testing.T) {
 		})
 	}
 }
-
-func TestSourcePackageNameCriteria(t *testing.T) {
-	c := BySourcePackageName("openssl")
-
-	name, indirect, ok := PackageNameOf(c)
-	assert.Equal(t, "openssl", name)
-	assert.True(t, indirect)
-	assert.True(t, ok)
-
-	matches, _, err := c.MatchesVulnerability(vulnerability.Vulnerability{PackageName: "OpenSSL"})
-	require.NoError(t, err)
-	assert.True(t, matches, "matched as a package name")
-
-	_, indirect, ok = PackageNameOf(ByPackageName("openssl"))
-	assert.False(t, indirect)
-	assert.True(t, ok)
-
-	_, _, ok = PackageNameOf(ByID("CVE-1"))
-	assert.False(t, ok)
-
-	assert.Equal(t, BySourcePackageName("libssl3"), WithPackageName(c, "libssl3"))
-	assert.Equal(t, ByPackageName("libssl3"), WithPackageName(ByPackageName("openssl"), "libssl3"))
-}

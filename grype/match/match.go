@@ -226,12 +226,7 @@ func mergeReferences(base, other []vulnerability.Reference) []vulnerability.Refe
 	}
 
 	// for stable output
-	slices.SortFunc(out, func(a, b vulnerability.Reference) int {
-		if c := strings.Compare(a.Namespace, b.Namespace); c != 0 {
-			return c
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
+	slices.SortFunc(out, vulnerability.CompareReferences)
 	return out
 }
 

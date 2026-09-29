@@ -74,7 +74,7 @@ func (m *Matcher) Match(vp vulnerability.Provider, p pkg.Package) ([]match.Match
 		internal.OwnershipIgnores(p, ignorereasons.DistroFixed, allFixed.Vulnerabilities()...),
 	)
 
-	return vulnerable.ToMatches(), ignores, nil
+	return vulnerable.ToMatches(p), ignores, nil
 }
 
 // distroResults searches the authoritative distro feed for the package and each of its upstream/origin
@@ -113,7 +113,8 @@ func (m *Matcher) nakIgnores(vp vulnerability.Provider, p pkg.Package) ([]match.
 		}
 		upstreamNaks, err := provider.FindResults(
 			search.ByDistro(*upstreamPkg.Distro),
-			search.BySourcePackageName(upstreamPkg.Name),
+			search.ByPackageName(upstreamPkg.Name),
+			search.BySourcePackage(),
 			nakConstraint,
 			search.WithPackage(upstreamPkg),
 		)
@@ -130,13 +131,13 @@ func (m *Matcher) nakIgnores(vp vulnerability.Provider, p pkg.Package) ([]match.
 // upstream/origin packages, the latter recorded against the SBOM package. Searching the origin is what
 // surfaces, for example, an openssl CVE for a libssl3 APK whose origin is openssl.
 func (m *Matcher) cpeResults(provider vulnerability.Provider, p pkg.Package) (result.Set, []match.IgnoreFilter, error) {
-	disclosures, ignores, err := m.cpeDisclosures(provider, p, p)
+	disclosures, ignores, err := m.cpeDisclosures(provider, p)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	for _, upstreamPkg := range pkg.UpstreamPackages(p) {
-		upstreamDisclosures, upstreamIgnores, err := m.cpeDisclosures(provider, upstreamPkg, p)
+		upstreamDisclosures, upstreamIgnores, err := m.cpeDisclosures(provider, upstreamPkg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -147,7 +148,7 @@ func (m *Matcher) cpeResults(provider vulnerability.Provider, p pkg.Package) (re
 	return disclosures, ignores, nil
 }
 
-func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg, catalogPkg pkg.Package) (result.Set, []match.IgnoreFilter, error) {
+func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg pkg.Package) (result.Set, []match.IgnoreFilter, error) {
 	cpeSet, ignores, err := internal.FindResultsByCPEs(provider, searchPkg, m.Type())
 	if err != nil {
 		if !errors.Is(err, internal.ErrEmptyCPEMatch) {
@@ -160,10 +161,6 @@ func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg, cat
 		return cpeSet, ignores, nil
 	}
 
-	if searchPkg.Name != catalogPkg.Name {
-		cpeSet = attributeTo(cpeSet, catalogPkg)
-	}
-
 	if searchPkg.Distro == nil {
 		// no distro feed, so no authority to defer to: NVD's fix is the only information there is
 		return cpeSet, ignores, nil
@@ -172,13 +169,6 @@ func (m *Matcher) cpeDisclosures(provider vulnerability.Provider, searchPkg, cat
 	// NVD cannot know when the distro will ship a fix, and an inferred NVD fix is an upstream release
 	// number rather than an apk version, so no record leaves here carrying one (see #2162)
 	return stripFixState(cpeSet), ignores, nil
-}
-
-// attributeTo records results against the cataloged package rather than the upstream searched.
-func attributeTo(s result.Set, catalogPkg pkg.Package) result.Set {
-	return s.Map(func(r *result.Result) {
-		r.Package = &catalogPkg
-	})
 }
 
 func stripFixState(s result.Set) result.Set {

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/anchore/grype/grype/match"
@@ -14,7 +13,8 @@ import (
 	"github.com/anchore/grype/grype/vulnerability"
 )
 
-var splitPkg = pkg.Package{ID: "pkg-1", Name: "openssl", Version: "1.1.1-2rfubu.1"}
+// splitPkg states no version, so each split compares its records at the version it is called with
+var splitPkg = pkg.Package{ID: "pkg-1", Name: "openssl"}
 
 func debVersion(raw string) *version.Version {
 	return version.New(raw, version.DebFormat)
@@ -25,54 +25,126 @@ const (
 	streamNS = "rapidfort:distro:rapidfort-ubuntu:20.4+rf"
 )
 
-func TestSet_SplitVulnerable_StreamFixOutranksOpenEndedNativeRow(t *testing.T) {
-	// the native row is open-ended with no fix; the stream shipped a fix this build is past
-	s := setOf("CVE-2026-1",
-		record("CVE-2026-1", nativeNS, ">= 1.1.1-1ubuntu2"),
-		record("CVE-2026-1", streamNS, "< 1.1.1-3rfubu.1", "1.1.1-3rfubu.1"),
-	)
+const (
+	highNS = "rapidfort:distro:rapidfort-ubuntu:20.4+hi"
+	lowNS  = "rapidfort:distro:rapidfort-ubuntu:20.4+lo"
+)
 
-	vulnerable, notVulnerable := SplitVulnerable(s, debVersion("1.1.1-5rfubu.1"))
-
-	require.Empty(t, vulnerable)
-	require.ElementsMatch(t, []string{nativeNS, streamNS}, namespacesOf(notVulnerable))
+// prioritized ranks, strongest first: highNS and lowNS as rule streams of priority 30 and 20, streamNS
+// as a rule stream of default priority, then the native rows.
+func prioritized(id string, vulns ...vulnerability.Vulnerability) result.Set {
+	s := setOf(id, vulns...)
+	for i, r := range s[id] {
+		switch r.Vulnerabilities[0].Namespace {
+		case highNS:
+			s[id][i].Rank = result.Rank{FromSearchRule: true, RulePriority: 30}
+		case lowNS:
+			s[id][i].Rank = result.Rank{FromSearchRule: true, RulePriority: 20}
+		}
+	}
+	return s
 }
 
-func TestSet_SplitVulnerable_StreamOutranksNativeWhenBothVulnerable(t *testing.T) {
-	// both streams cover this build with different fixes; only the more confident stream is reported
-	s := setOf("CVE-2026-1",
-		record("CVE-2026-1", nativeNS, "< 1.30+dfsg-7ubuntu0.20.04.2", "1.30+dfsg-7ubuntu0.20.04.2"),
-		record("CVE-2026-1", streamNS, "< 1.30+dfsg-8rfubu.1", "1.30+dfsg-8rfubu.1"),
-	)
+// The highest-ranked record with something to say about the version decides; lower-ranked records
+// neither resolve it nor are reported beside it.
+func TestSet_SplitVulnerable_HigherRankDecides(t *testing.T) {
+	const id = "CVE-2026-1"
+	rec := func(namespace, constraint string, fixVersions ...string) vulnerability.Vulnerability {
+		return record(id, namespace, constraint, fixVersions...)
+	}
 
-	vulnerable, notVulnerable := SplitVulnerable(s, debVersion("1.30+dfsg-7rfubu.1"))
+	tests := []struct {
+		name              string
+		records           []vulnerability.Vulnerability
+		version           string
+		wantVulnerable    []string
+		wantNotVulnerable []string
+	}{
+		{
+			name: "a stream's fix resolves an open-ended native row",
+			records: []vulnerability.Vulnerability{
+				rec(nativeNS, ">= 1.1.1-1ubuntu2"),
+				rec(streamNS, "< 1.1.1-3rfubu.1", "1.1.1-3rfubu.1"),
+			},
+			version:           "1.1.1-5rfubu.1",
+			wantNotVulnerable: []string{nativeNS, streamNS},
+		},
+		{
+			name: "a higher-priority rule's fix resolves a lower-priority rule's open-ended row",
+			records: []vulnerability.Vulnerability{
+				rec(lowNS, ">= 1.0"),
+				rec(highNS, "< 1.3", "1.3"),
+			},
+			version:           "1.4",
+			wantNotVulnerable: []string{lowNS, highNS},
+		},
+		{
+			name: "a stream outranks native when both are vulnerable",
+			records: []vulnerability.Vulnerability{
+				rec(nativeNS, "< 1.30+dfsg-7ubuntu0.20.04.2", "1.30+dfsg-7ubuntu0.20.04.2"),
+				rec(streamNS, "< 1.30+dfsg-8rfubu.1", "1.30+dfsg-8rfubu.1"),
+			},
+			version:        "1.30+dfsg-7rfubu.1",
+			wantVulnerable: []string{streamNS},
+		},
+		{
+			name: "only the highest rank is reported when every rank is vulnerable",
+			records: []vulnerability.Vulnerability{
+				rec(lowNS, "< 1.5", "1.5"),
+				rec(highNS, "< 1.3", "1.3"),
+				rec(streamNS, "< 1.7", "1.7"),
+				rec(nativeNS, "< 1.9", "1.9"),
+			},
+			version:        "1.0",
+			wantVulnerable: []string{highNS},
+		},
+		{
+			name: "a lower rank decides where the higher ranks are silent or absent",
+			records: []vulnerability.Vulnerability{
+				rec(highNS, ">= 2.0, < 2.5", "2.5"),
+				rec(streamNS, "< 1.7", "1.7"),
+				rec(nativeNS, "< 1.9", "1.9"),
+			},
+			version:        "1.0",
+			wantVulnerable: []string{streamNS},
+		},
+		{
+			name: "native decides where the stream is silent",
+			records: []vulnerability.Vulnerability{
+				rec(nativeNS, "< 1.5", "1.5"),
+				rec(streamNS, ">= 2.0, < 2.5", "2.5"),
+			},
+			version:        "1.0",
+			wantVulnerable: []string{nativeNS},
+		},
+		{
+			name: "a lower rank's fix does not resolve a higher rank",
+			records: []vulnerability.Vulnerability{
+				rec(streamNS, "< 1.3", "1.3"),
+				rec(highNS, ">= 1.0"),
+			},
+			version:        "1.4",
+			wantVulnerable: []string{highNS},
+		},
+		{
+			name: "native outside its range does not resolve a vulnerable stream",
+			records: []vulnerability.Vulnerability{
+				rec(nativeNS, ">= 1.1.1-1ubuntu2"),
+				rec(streamNS, "< 1.1.1-3rfubu.1", "1.1.1-3rfubu.1"),
+			},
+			version:        "1.1.1-0ubuntu1",
+			wantVulnerable: []string{streamNS},
+		},
+	}
 
-	require.Equal(t, []string{streamNS}, namespacesOf(vulnerable))
-	require.Empty(t, notVulnerable, "a vulnerability still being reported must never also become an ignore")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vulnerable, notVulnerable := SplitVulnerable(prioritized(id, tt.records...), debVersion(tt.version))
 
-func TestSet_SplitVulnerable_SilentStreamFallsThroughToNative(t *testing.T) {
-	// the stream's range misses this build, so the native rows decide
-	s := setOf("CVE-2026-1",
-		record("CVE-2026-1", nativeNS, "< 1.5", "1.5"),
-		record("CVE-2026-1", streamNS, ">= 2.0, < 2.5", "2.5"),
-	)
-
-	vulnerable, _ := SplitVulnerable(s, debVersion("1.0"))
-
-	require.Equal(t, []string{nativeNS}, namespacesOf(vulnerable))
-}
-
-func TestSet_SplitVulnerable_SilentNativeFallsThroughToStream(t *testing.T) {
-	// the native row misses this build, so the stream decides
-	s := setOf("CVE-2026-1",
-		record("CVE-2026-1", nativeNS, ">= 1.1.1-1ubuntu2"),
-		record("CVE-2026-1", streamNS, "< 1.1.1-3rfubu.1", "1.1.1-3rfubu.1"),
-	)
-
-	vulnerable, _ := SplitVulnerable(s, debVersion("1.1.1-0ubuntu1"))
-
-	require.Equal(t, []string{streamNS}, namespacesOf(vulnerable))
+			require.ElementsMatch(t, tt.wantVulnerable, namespacesOf(vulnerable))
+			require.ElementsMatch(t, tt.wantNotVulnerable, namespacesOf(notVulnerable))
+		})
+	}
 }
 
 func TestSet_SplitVulnerable_OwnWindowsDoNotResolveEachOther(t *testing.T) {
@@ -209,24 +281,17 @@ func TestSet_SplitVulnerable_UnaffectedIsNeverAMatch(t *testing.T) {
 	})
 }
 
-// TestSet_SplitVulnerable_UsesEachResultsOwnSearchedVersion: an rpm's source-package records are
+// TestSet_SplitVulnerable_UsesEachResultsOwnPackageVersion: an rpm's source-package records are
 // searched at an epoch-less version (see rpm.Matcher.matchDistro), so each record must be compared
 // against the version its own search used.
-func TestSet_SplitVulnerable_UsesEachResultsOwnSearchedVersion(t *testing.T) {
+func TestSet_SplitVulnerable_UsesEachResultsOwnPackageVersion(t *testing.T) {
 	resultFor := func(searched string) result.Result {
-		var details []match.Detail
-		if searched != "" {
-			details = []match.Detail{{
-				SearchedBy: match.DistroParameters{
-					Package: match.PackageParameter{Name: splitPkg.Name, Version: searched},
-				},
-			}}
-		}
+		sp := splitPkg
+		sp.Version = searched
 		return result.Result{
 			ID:              "CVE-1",
-			Package:         &splitPkg,
+			Package:         &sp,
 			Vulnerabilities: []vulnerability.Vulnerability{record("CVE-1", nativeNS, "< 2.0")},
-			Details:         details,
 		}
 	}
 
@@ -255,59 +320,6 @@ func TestSet_SplitVulnerable_UsesEachResultsOwnSearchedVersion(t *testing.T) {
 	})
 }
 
-func TestDetails_searchedPackageVersion(t *testing.T) {
-	tests := []struct {
-		name    string
-		details match.Details
-		want    string
-		wantOK  bool
-	}{
-		{
-			name:    "distro details name the version their search was made at",
-			details: match.Details{{SearchedBy: match.DistroParameters{Package: match.PackageParameter{Name: "openssl", Version: "1.1.1"}}}},
-			want:    "1.1.1",
-			wantOK:  true,
-		},
-		{
-			name:    "ecosystem details do too",
-			details: match.Details{{SearchedBy: match.EcosystemParameters{Package: match.PackageParameter{Name: "django", Version: "3.2"}}}},
-			want:    "3.2",
-			wantOK:  true,
-		},
-		{
-			name:    "cpe details do not: their package version is the cataloged one, not what the search compared against",
-			details: match.Details{{SearchedBy: match.CPEParameters{Package: match.PackageParameter{Name: "openssl", Version: "1.1.1-r2"}}}},
-			wantOK:  false,
-		},
-		{
-			name:    "a blank version is no version",
-			details: match.Details{{SearchedBy: match.DistroParameters{Package: match.PackageParameter{Name: "openssl"}}}},
-			wantOK:  false,
-		},
-		{
-			name: "the first detail to name one answers for the set",
-			details: match.Details{
-				{SearchedBy: match.CPEParameters{Package: match.PackageParameter{Version: "cataloged"}}},
-				{SearchedBy: match.DistroParameters{Package: match.PackageParameter{Version: "searched"}}},
-			},
-			want:   "searched",
-			wantOK: true,
-		},
-		{
-			name:   "no details, no version",
-			wantOK: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, ok := searchedPackageVersion(tt.details)
-			assert.Equal(t, tt.wantOK, ok)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 // record builds one hydrated DB record: a single affected range and the fix it names, if any.
 func record(id, namespace, constraint string, fixVersions ...string) vulnerability.Vulnerability {
 	v := vulnerability.Vulnerability{
@@ -327,9 +339,9 @@ func record(id, namespace, constraint string, fixVersions ...string) vulnerabili
 // result.Rank).
 func rankForNamespace(namespace string) result.Rank {
 	if i := strings.LastIndex(namespace, ":"); i >= 0 && strings.Contains(namespace[i:], "+") {
-		return result.Rank{Stream: result.StreamRuled}
+		return result.Rank{FromSearchRule: true}
 	}
-	return result.Rank{Stream: result.StreamOwn}
+	return result.Rank{}
 }
 
 // setOf puts every record under one ID, ranked by namespace (see rankForNamespace).

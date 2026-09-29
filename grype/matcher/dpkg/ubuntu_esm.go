@@ -52,7 +52,7 @@ func shouldUseUbuntuESMMatching(d *distro.Distro) bool {
 // Unlike RHEL EUS there is no cross-minor reachability problem: Ubuntu ESM is one line per LTS release and the
 // resolution search only pulls same-minor 'ubuntu:XX.YY' and 'ubuntu:XX.YY+esm' rows, so every '+esm' fix pulled
 // is reachable by construction.
-func ubuntuESMMatches(provider result.Provider, searchPkg pkg.Package, missingEpochStrategy version.MissingEpochStrategy, extra ...vulnerability.Criteria) ([]match.Match, []match.IgnoreFilter, error) {
+func ubuntuESMMatches(provider result.Provider, target, searchPkg pkg.Package, missingEpochStrategy version.MissingEpochStrategy, extra ...vulnerability.Criteria) ([]match.Match, []match.IgnoreFilter, error) {
 	distroWithoutESM := *searchPkg.Distro
 	distroWithoutESM.Channels = nil // clear the ESM channel so that we can search for the base distro
 
@@ -69,7 +69,7 @@ func ubuntuESMMatches(provider result.Provider, searchPkg pkg.Package, missingEp
 		search.ByDistro(distroWithoutESM), // e.g. ubuntu:16.04 (no ESM channel)
 		internal.OnlyQualifiedPackages(searchPkg),
 		search.WithPackage(searchPkg),
-		internal.OnlyVulnerableVersions(pkgVersion),
+		internal.OnlyVulnerableVersions(pkgVersion), //nolint:staticcheck
 	}
 	disclosureCriteria = append(disclosureCriteria, extra...)
 
@@ -112,7 +112,7 @@ func ubuntuESMMatches(provider result.Provider, searchPkg pkg.Package, missingEp
 	//    final set of vulnerabilities is a fused set of disclosures and fixes together.
 	remaining = remaining.Merge(resolutions, mergeESMAdvisoriesIntoMainDisclosures(pkgVersion))
 
-	return remaining.ToMatches(), internal.OwnershipIgnores(searchPkg, IgnoreReasonDistroNotVulnerable, esmFixes.Vulnerabilities()...), nil
+	return remaining.ToMatches(target), internal.OwnershipIgnores(searchPkg, IgnoreReasonDistroNotVulnerable, esmFixes.Vulnerabilities()...), nil
 }
 
 // mergeESMAdvisoriesIntoMainDisclosures returns a function that filters disclosures based on the provided advisory
@@ -135,7 +135,10 @@ func mergeESMAdvisoriesIntoMainDisclosures(v *version.Version) func(disclosures,
 
 // mergeESMAdvisoryIntoMainDisclosure processes a single disclosure Result against its corresponding advisory overlay Results.
 func mergeESMAdvisoryIntoMainDisclosure(v *version.Version, disclosures result.Result, advisoryOverlays []result.Result) result.Result {
-	processedResult := disclosures.Derive()
+	processedResult := result.Result{
+		ID:      disclosures.ID,
+		Package: disclosures.Package,
+	}
 
 	for _, disclosure := range disclosures.Vulnerabilities {
 		processedVuln, advisoryDetails := mergeESMAdvisoryIntoSingleDisclosure(v, disclosure, advisoryOverlays)

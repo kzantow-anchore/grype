@@ -117,6 +117,10 @@ const (
 	rapidfortRedhatDistro = "rapidfort-redhat"
 	rapidfortUbuntuDistro = "rapidfort-ubuntu"
 
+	apkEcosystem = string(pkg.ApkPkg)
+	debEcosystem = string(pkg.DebPkg)
+	rpmEcosystem = string(pkg.RpmPkg)
+
 	// a version marker names the stream a package was built in, so it outranks the rf- name prefix
 	priorityRapidFortRebuildMarker = 30
 	priorityRapidFortDistTag       = 20
@@ -131,23 +135,23 @@ const (
 func KnownSearchRules() []SearchRule {
 	return []SearchRule{
 		// rapidfort-redhat: .rf versions search the rf channel; native elN versions are channel-less
-		{MatchDistroName: rapidfortRedhatDistro, MatchPackageVersion: `.*\.rf(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
+		{MatchDistroName: rapidfortRedhatDistro, MatchEcosystem: rpmEcosystem, MatchPackageVersion: `.*\.rf(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 
 		// no rf- name rule for dpkg: rf- names appear in both streams
-		{MatchDistroName: rapidfortUbuntuDistro, MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
-		{MatchDistroName: rapidfortDebianDistro, MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
+		{MatchDistroName: rapidfortUbuntuDistro, MatchEcosystem: debEcosystem, MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
+		{MatchDistroName: rapidfortDebianDistro, MatchEcosystem: debEcosystem, MatchPackageVersion: rapidfortDpkgRebuildMarker, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortRebuildMarker},
 
 		// lazy wildcard so the group binds the first dist tag (`1.2-3.fc31.fc43` -> fc31)
-		{MatchDistroName: rapidfortRedhatDistro, MatchPackageVersion: `.*?\.fc(?P<fedora>\d+)(?:[._~-].*)?`, ReplacementChannel: ptr("fc${fedora}"), Priority: priorityRapidFortDistTag},
+		{MatchDistroName: rapidfortRedhatDistro, MatchEcosystem: rpmEcosystem, MatchPackageVersion: `.*?\.fc(?P<fedora>\d+)(?:[._~-].*)?`, ReplacementChannel: ptr("fc${fedora}"), Priority: priorityRapidFortDistTag},
 
-		// rf- name fallback; elN versions have no rule to outrank it, so they are excluded here
-		{MatchDistroName: rapidfortRedhatDistro, MatchPackageName: `rf-.*`, ExcludePackageVersion: `.*\.el\d+(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortNameMarker},
+		// rf- name fallback; elN versions are channel-less, so they are excluded here
+		{MatchDistroName: rapidfortRedhatDistro, MatchEcosystem: rpmEcosystem, MatchPackageName: `rf-.*`, ExcludePackageVersion: `.*\.el\d+(?:[._~-].*)?`, ReplacementChannel: ptr("rf"), Priority: priorityRapidFortNameMarker},
 
-		// rapidfort-alpine data is complete, so NVD is not searched
-		{MatchDistroName: rapidfortAlpineDistro, MatchEcosystem: "apk"},
+		// rapidfort-alpine data is complete: its CPE searches read rapidfort-alpine rows in place of NVD
+		{MatchDistroName: rapidfortAlpineDistro, MatchEcosystem: apkEcosystem, ReplacementDistroName: ptr(rapidfortAlpineDistro)},
 
 		// echo publishes only fixes, so debian data is still searched
-		{MatchEcosystem: "deb", MatchPackageVersion: `.*[.-]echo.*`, ReplacementDistroName: ptr("echo")},
+		{MatchEcosystem: debEcosystem, MatchPackageVersion: `.*[.-]echo.*`, ReplacementDistroName: ptr("echo")},
 	}
 }
 

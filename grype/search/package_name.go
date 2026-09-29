@@ -26,41 +26,6 @@ func (v *PackageNameCriteria) MatchesVulnerability(vuln vulnerability.Vulnerabil
 	return true, "", nil
 }
 
-// BySourcePackageName is ByPackageName for an upstream or source package's name; records found by
-// it are indirect matches.
-func BySourcePackageName(packageName string) vulnerability.Criteria {
-	return &SourcePackageNameCriteria{PackageNameCriteria: PackageNameCriteria{PackageName: packageName}}
-}
-
-// SourcePackageNameCriteria is searched exactly as a PackageNameCriteria.
-type SourcePackageNameCriteria struct {
-	PackageNameCriteria
-}
-
-// PackageNameOf returns the name c searches by and whether it is indirect; ok is false when c is not
-// a package name criteria.
-func PackageNameOf(c vulnerability.Criteria) (name string, indirect, ok bool) {
-	switch c := c.(type) {
-	case *PackageNameCriteria:
-		return c.PackageName, false, true
-	case *SourcePackageNameCriteria:
-		return c.PackageName, true, true
-	}
-	return "", false, false
-}
-
-// WithPackageName returns package name criteria for name, indirect when c is.
-func WithPackageName(c vulnerability.Criteria, name string) vulnerability.Criteria {
-	if _, indirect, _ := PackageNameOf(c); indirect {
-		return BySourcePackageName(name)
-	}
-	return ByPackageName(name)
-}
-
 var _ interface {
 	vulnerability.Criteria
 } = (*PackageNameCriteria)(nil)
-
-var _ interface {
-	vulnerability.Criteria
-} = (*SourcePackageNameCriteria)(nil)

@@ -20,20 +20,21 @@ import (
 //
 //   - A record's affected ranges are hydrated as separate vulnerabilities; only ranges covering the
 //     version are kept.
-//   - When streams disagree (e.g. a base distro's rows and a rebuild's channel), the highest-ranked
-//     stream with a covering range decides (see result.Rank).
+//   - When searches disagree (e.g. a base distro's rows and a rebuild's channel a search rule selected,
+//     or the channels of two rules), the highest-ranked search with a covering range decides (see
+//     result.Rank).
 //   - Unaffected records (NAKs) deny regardless of rank.
 //
 // v is the fallback for records whose details do not carry the searched version.
 func SplitVulnerable(s result.Set, v *version.Version) (vulnerable, notVulnerable result.Set) {
 	affected, unaffected := splitUnaffected(s)
 
-	unaffected = filterByVersion(unaffected, v, matchesConstraints)
+	unaffected = filterByVersion(unaffected, v, matchesVersionConstraints)
 
 	// a fix exactly at the installed version proves the build carries that advisory's patch
 	exactlyFixed := keepByExactFixVersion(affected, v)
 
-	candidates := filterByVersion(affected, v, matchesConstraints)
+	candidates := filterByVersion(affected, v, matchesVersionConstraints)
 
 	// matching one range of a vulnerability sets aside its other ranges in that namespace
 	notVulnerable = affected.Filter(removeExactVulnerabilitiesByNamespace(candidates))
@@ -41,7 +42,7 @@ func SplitVulnerable(s result.Set, v *version.Version) (vulnerable, notVulnerabl
 	if v != nil {
 		notVulnerable = filterByVersion(notVulnerable, v, outsideConstraints)
 
-		// TODO: only fixed records are kept; other not-vulnerable states (e.g. wont-fix) are dropped
+		// TODO: only fixed records are kept; other not-vulnerable states (e.g. not-affected) are not kept here
 		notVulnerable = notVulnerable.Filter(search.ByFixedVersion(*v))
 	}
 
@@ -76,28 +77,16 @@ func removeExactlyFixed(candidates, exactlyFixed result.Set) result.Set {
 	}
 	patchedCVEs := strset.New()
 	for id, results := range exactlyFixed {
-		patchedCVEs.Add(cveIDsOf(getIdentity(id, results)).List()...)
+		patchedCVEs.Add(cveIDsOf(result.Identity(id, results)).List()...)
 	}
 	out := result.Set{}
 	for id, results := range candidates {
-		cves := cveIDsOf(getIdentity(id, results))
+		cves := cveIDsOf(result.Identity(id, results))
 		// strset's receiver is the superset
 		if cves.Size() > 0 && patchedCVEs.IsSubset(cves) {
 			continue
 		}
 		out[id] = results
-	}
-	return out
-}
-
-func getIdentity(id string, results []result.Result) *strset.Set {
-	out := strset.New(id)
-	for _, r := range results {
-		for _, v := range r.Vulnerabilities {
-			for _, alias := range v.RelatedVulnerabilities {
-				out.Add(alias.ID)
-			}
-		}
 	}
 	return out
 }
@@ -119,10 +108,7 @@ func removeExactVulnerabilitiesByNamespace(candidates result.Set) vulnerability.
 		vulnerable := candidates[incoming.ID]
 		for _, v := range vulnerable {
 			for _, v := range v.Vulnerabilities {
-				// FIXME this is to work around an issue in the database where multiple GHSAs and possibly other providers
-				// result in multiple ranges being hydrated as multiple vulnerability objects each with their own range
-				// ideally, these could be merged together when we retrieve these records from the DB but that would change
-				// the fix version displayed in some cases
+				// a record with several affected ranges (e.g. GHSA) is hydrated as one vulnerability per range
 				if v.ID == incoming.ID && v.Namespace == incoming.Namespace {
 					return false, "same vulnerability ID", nil
 				}
@@ -130,16 +116,6 @@ func removeExactVulnerabilitiesByNamespace(candidates result.Set) vulnerability.
 		}
 		return true, "", nil
 	})
-}
-
-// matchesConstraints tests a record's affected range against v; with no version every record matches.
-func matchesConstraints(v *version.Version) vulnerability.Criteria {
-	if v == nil || v.Raw == "" {
-		return search.ByFunc(func(vulnerability.Vulnerability) (bool, string, error) {
-			return true, "", nil
-		})
-	}
-	return search.ByVersion(*v)
 }
 
 // outsideConstraints tests that v falls outside a record's affected range; with no version nothing matches.
@@ -302,35 +278,25 @@ func filterByVersion(s result.Set, v *version.Version, criteria func(*version.Ve
 	return out
 }
 
-// searchedVersion returns the version recorded on r's details, falling back to v. This lets one split
-// span a package and its upstreams, whose versions differ (e.g. rpm source packages have no epoch).
+// searchedVersion returns the version of the package r's search was for, falling back to v. This lets
+// one split span a package and its upstreams, whose versions differ (e.g. rpm source packages have no
+// epoch, a subpackage or binNMU is versioned apart from its source). The version keeps v's format and
+// comparison config.
 func searchedVersion(r result.Result, v *version.Version) *version.Version {
-	raw, ok := searchedPackageVersion(r.Details)
-	if !ok || (v != nil && raw == v.Raw) {
+	if r.Package == nil || r.Package.Version == "" {
 		return v
 	}
+	raw := r.Package.Version
 
 	switch {
+	case v != nil && raw == v.Raw:
+		return v
 	case v != nil:
 		return version.NewWithConfig(raw, v.Format, v.Config)
-	case r.Package != nil:
-		return version.New(raw, pkg.VersionFormat(*r.Package))
 	}
-	return nil
+	return version.New(raw, pkg.VersionFormat(*r.Package))
 }
 
 func filterOne(id string, r result.Result, criteria vulnerability.Criteria) []result.Result {
 	return result.Set{id: {r}}.Filter(criteria)[id]
-}
-
-func searchedPackageVersion(details match.Details) (string, bool) {
-	for _, detail := range details {
-		switch d := detail.SearchedBy.(type) {
-		case match.DistroParameters:
-			return d.Package.Version, d.Package.Version != ""
-		case match.EcosystemParameters:
-			return d.Package.Version, d.Package.Version != ""
-		}
-	}
-	return "", false
 }

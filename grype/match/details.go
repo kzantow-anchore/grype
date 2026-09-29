@@ -153,7 +153,6 @@ func (m Details) Swap(i, j int) {
 	m[i], m[j] = m[j], m[i]
 }
 
-// BestType returns the strongest match type, or "" when empty.
 func (m Details) BestType() Type {
 	var best Type
 	for _, d := range m {

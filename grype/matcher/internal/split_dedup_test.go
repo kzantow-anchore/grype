@@ -24,8 +24,8 @@ func TestKeepMoreSpecificCandidates_PreservesDroppedDetails(t *testing.T) {
 	indirectDetail := match.Detail{Type: match.ExactIndirectMatch, Matcher: match.RpmMatcher, Confidence: 1.0, SearchedBy: "php"}
 
 	candidates := result.Set{id: []result.Result{
-		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln()}, Details: match.Details{directDetail}, Rank: result.Rank{Stream: result.StreamOwn, Kind: match.ExactDirectMatch}},
-		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln()}, Details: match.Details{indirectDetail}, Rank: result.Rank{Stream: result.StreamOwn, Kind: match.ExactIndirectMatch}},
+		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln()}, Details: match.Details{directDetail}, Rank: result.Rank{MatchType: match.ExactDirectMatch}},
+		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln()}, Details: match.Details{indirectDetail}, Rank: result.Rank{MatchType: match.ExactIndirectMatch}},
 	}}
 
 	got := keepMoreSpecificCandidates(candidates, result.Set{})
@@ -50,11 +50,11 @@ func TestKeepMoreSpecificCandidates_PreservesNAKDroppedDetails(t *testing.T) {
 	nativeDetail := match.Detail{Type: match.ExactDirectMatch, Matcher: match.DpkgMatcher, Confidence: 1.0, SearchedBy: "native"}
 
 	candidates := result.Set{id: []result.Result{
-		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln(streamNS)}, Details: match.Details{streamDetail}, Rank: result.Rank{Stream: result.StreamRuled, Kind: match.ExactDirectMatch}},
-		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln(nativeNS)}, Details: match.Details{nativeDetail}, Rank: result.Rank{Stream: result.StreamOwn, Kind: match.ExactDirectMatch}},
+		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln(streamNS)}, Details: match.Details{streamDetail}, Rank: result.Rank{FromSearchRule: true, MatchType: match.ExactDirectMatch}},
+		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln(nativeNS)}, Details: match.Details{nativeDetail}, Rank: result.Rank{MatchType: match.ExactDirectMatch}},
 	}}
 	notVulnerable := result.Set{id: []result.Result{
-		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln(streamNS)}, Details: match.Details{streamDetail}, Rank: result.Rank{Stream: result.StreamRuled, Kind: match.ExactDirectMatch}},
+		{ID: id, Vulnerabilities: []vulnerability.Vulnerability{mkVuln(streamNS)}, Details: match.Details{streamDetail}, Rank: result.Rank{FromSearchRule: true, MatchType: match.ExactDirectMatch}},
 	}}
 
 	got := keepMoreSpecificCandidates(candidates, notVulnerable)
@@ -65,7 +65,7 @@ func TestKeepMoreSpecificCandidates_PreservesNAKDroppedDetails(t *testing.T) {
 }
 
 // A self-origin upstream search (same name as the package) is an indirect search (see
-// search.BySourcePackageName), so the package's own record calling the version fixed outranks it,
+// search.BySourcePackage), so the package's own record calling the version fixed outranks it,
 // as it outranks any other indirect match in the same stream.
 func TestKeepMoreSpecificCandidates_SelfOriginUpstreamRanksBelowOwnRecord(t *testing.T) {
 	const id = "CVE-2026-2"
@@ -76,7 +76,7 @@ func TestKeepMoreSpecificCandidates_SelfOriginUpstreamRanksBelowOwnRecord(t *tes
 			ID:              id,
 			Vulnerabilities: []vulnerability.Vulnerability{vuln},
 			Details:         match.Details{{Type: kind, Matcher: match.ApkMatcher, Confidence: 1.0}},
-			Rank:            result.Rank{Stream: result.StreamOwn, Kind: kind},
+			Rank:            result.Rank{MatchType: kind},
 		}}}
 	}
 

@@ -117,7 +117,7 @@ func (m *Matcher) matchAlmaLinux(vp vulnerability.Provider, p pkg.Package) ([]ma
 	if p.Distro == nil {
 		return nil, nil, nil
 	}
-	if isUnknownVersion(p.Version) {
+	if internal.IsUnknownVersion(p.Version) {
 		log.WithFields("package", p.Name).Trace("skipping package with unknown version")
 		return nil, nil, nil
 	}
@@ -129,11 +129,10 @@ func (m *Matcher) matchAlmaLinux(vp vulnerability.Provider, p pkg.Package) ([]ma
 	addEpochIfApplicable(&binaryPkg)
 
 	// Call almaLinuxMatches with both the binary package and its upstreams
-	return almaLinuxMatchesWithUpstreams(provider, binaryPkg)
+	return almaLinuxMatchesWithUpstreams(provider, p, binaryPkg)
 }
 
-// matchRedhatEUS searches the binary package and its upstreams with one result provider, so upstream
-// matches are recorded as indirect.
+// matchRedhatEUS searches the binary package and, as source packages, its upstreams.
 //
 // Regarding RPM epochs for the binary package... we know that the package and vulnerability will
 // have well-specified epochs since both are sourced from either the RPM DB directly or the upstream
@@ -152,14 +151,14 @@ func (m *Matcher) matchRedhatEUS(vp vulnerability.Provider, p pkg.Package) ([]ma
 	binaryPkg := p
 	addEpochIfApplicable(&binaryPkg)
 
-	matches, ignored, err := m.eusMatches(provider, binaryPkg)
+	matches, ignored, err := m.eusMatches(provider, p, binaryPkg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to find vulnerabilities by exact package name: %w", err)
 	}
 
 	for _, indirectPackage := range pkg.UpstreamPackages(p) {
 		// upstreams are tagged arch "src", so binary-arch records are rejected
-		indirectMatches, ignores, err := m.eusMatches(provider, indirectPackage)
+		indirectMatches, ignores, err := m.eusMatches(provider, p, indirectPackage)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to find vulnerabilities for rpm upstream source package: %w", err)
 		}
@@ -170,15 +169,15 @@ func (m *Matcher) matchRedhatEUS(vp vulnerability.Provider, p pkg.Package) ([]ma
 	return matches, ignored, nil
 }
 
-func (m *Matcher) eusMatches(provider result.Provider, searchPkg pkg.Package) ([]match.Match, []match.IgnoreFilter, error) {
+func (m *Matcher) eusMatches(provider result.Provider, target, searchPkg pkg.Package) ([]match.Match, []match.IgnoreFilter, error) {
 	if searchPkg.Distro == nil {
 		return nil, nil, nil
 	}
-	if isUnknownVersion(searchPkg.Version) {
+	if internal.IsUnknownVersion(searchPkg.Version) {
 		log.WithFields("package", searchPkg.Name).Trace("skipping package with unknown version")
 		return nil, nil, nil
 	}
-	return redhatEUSMatches(provider, searchPkg, m.cfg.MissingEpochStrategy)
+	return redhatEUSMatches(provider, target, searchPkg, m.cfg.MissingEpochStrategy)
 }
 
 // matchDistro searches the binary package, with an explicit epoch (see matchRedhatEUS), and its
@@ -226,7 +225,7 @@ func (m *Matcher) eusMatches(provider result.Provider, searchPkg pkg.Package) ([
 // problems since an epoch delimits potentially non-comparable version lineages.
 func (m *Matcher) matchDistro(vp vulnerability.Provider, p pkg.Package) ([]match.Match, []match.IgnoreFilter, error) {
 	searchPkg := p
-	if !isUnknownVersion(searchPkg.Version) {
+	if !internal.IsUnknownVersion(searchPkg.Version) {
 		// "0:unknown" would defeat the search's own unknown-version check
 		addEpochIfApplicable(&searchPkg)
 	}
@@ -240,7 +239,7 @@ func (m *Matcher) matchDistro(vp vulnerability.Provider, p pkg.Package) ([]match
 		return nil, nil, err
 	}
 
-	return vulnerable.ToMatches(), internal.OwnershipIgnores(p, IgnoreReasonDistroNotVulnerable, notVulnerable.Vulnerabilities()...), nil
+	return vulnerable.ToMatches(p), internal.OwnershipIgnores(p, IgnoreReasonDistroNotVulnerable, notVulnerable.Vulnerabilities()...), nil
 }
 
 func addEpochIfApplicable(p *pkg.Package) {
@@ -260,8 +259,4 @@ func addEpochIfApplicable(p *pkg.Package) {
 		// no epoch was found, so we will add one
 		p.Version = "0:" + ver
 	}
-}
-
-func isUnknownVersion(v string) bool {
-	return v == "" || strings.ToLower(v) == "unknown"
 }

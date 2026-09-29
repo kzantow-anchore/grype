@@ -95,17 +95,9 @@ func TestApplyDistroIdentifiers(t *testing.T) {
 			},
 		},
 		{
-			name:   "file catalog without the marker file is a no-op",
+			name:   "directory source without the marker file is a no-op",
 			distro: distro.New(distro.Ubuntu, "20.04", ""),
 			sbom:   dirSBOM("/some/path", "/etc/os-release", "/usr/lib/os-release"),
-			want: func(t *testing.T, got *distro.Distro) {
-				assert.Equal(t, distro.Ubuntu, got.Type)
-			},
-		},
-		{
-			name:   "non-image source is a no-op",
-			distro: distro.New(distro.Ubuntu, "20.04", ""),
-			sbom:   dirSBOM("/some/path"),
 			want: func(t *testing.T, got *distro.Distro) {
 				assert.Equal(t, distro.Ubuntu, got.Type)
 			},
@@ -176,7 +168,7 @@ func TestApplyDistroIdentifiers(t *testing.T) {
 			identifiers: func() []distro.Identifier {
 				identifiers := distro.DefaultIdentifiers()
 				for i := range identifiers {
-					identifiers[i].Apply = distro.ChannelNeverEnabled
+					identifiers[i].Apply = distro.IdentifierNever
 				}
 				return identifiers
 			}(),

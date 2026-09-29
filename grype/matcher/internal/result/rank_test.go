@@ -18,14 +18,16 @@ import (
 func TestRank_Compare(t *testing.T) {
 	// strongest first; every rank outranks every rank after it
 	ordered := []Rank{
-		{Stream: StreamRuled, Kind: match.ExactDirectMatch},
-		{Stream: StreamRuled, Kind: match.ExactIndirectMatch},
-		{Stream: StreamRuled, Kind: match.CPEMatch},
-		{Stream: StreamRuled},
-		{Stream: StreamOwn, Kind: match.ExactDirectMatch},
-		{Stream: StreamOwn, Kind: match.ExactIndirectMatch},
-		{Stream: StreamOwn, Kind: match.CPEMatch},
-		{Stream: StreamOwn},
+		{FromSearchRule: true, RulePriority: 30, MatchType: match.CPEMatch},
+		{FromSearchRule: true, MatchType: match.ExactDirectMatch},
+		{FromSearchRule: true, MatchType: match.ExactIndirectMatch},
+		{FromSearchRule: true, MatchType: match.CPEMatch},
+		{FromSearchRule: true},
+		{FromSearchRule: true, RulePriority: -5, MatchType: match.ExactDirectMatch},
+		{MatchType: match.ExactDirectMatch},
+		{MatchType: match.ExactIndirectMatch},
+		{MatchType: match.CPEMatch},
+		{},
 	}
 	for i, a := range ordered {
 		for j, b := range ordered {
@@ -44,18 +46,18 @@ func TestRank_Compare(t *testing.T) {
 
 func TestRankOf_UsesTheStrongestDetail(t *testing.T) {
 	details := match.Details{{Type: match.CPEMatch}, {Type: match.ExactIndirectMatch}}
-	assert.Equal(t, Rank{Stream: StreamRuled, Kind: match.ExactIndirectMatch}, rankOf(StreamRuled, details))
-	assert.Equal(t, Rank{Stream: StreamOwn}, rankOf(StreamOwn, nil))
+	assert.Equal(t, Rank{FromSearchRule: true, RulePriority: 7, MatchType: match.ExactIndirectMatch}, rankOf([]vulnerability.Criteria{search.ByRule(7)}, details))
+	assert.Equal(t, Rank{}, rankOf(nil, nil))
 }
 
 func TestResult_Derive_KeepsRank(t *testing.T) {
-	r := Result{ID: "x", Vulnerabilities: []vulnerability.Vulnerability{{}}, Details: match.Details{{}}, Rank: Rank{Stream: StreamRuled, Kind: match.ExactDirectMatch}}
+	r := Result{ID: "x", Vulnerabilities: []vulnerability.Vulnerability{{}}, Details: match.Details{{}}, Rank: Rank{FromSearchRule: true, MatchType: match.ExactDirectMatch}}
 	assert.Equal(t, Result{ID: "x", Rank: r.Rank}, r.Derive())
 }
 
 // A package that is its own upstream is searched under its own name, so only the search can say its
 // upstream records are indirect; their details and rank must say so too.
-func TestProvider_SourcePackageNameSearch(t *testing.T) {
+func TestProvider_SourcePackageSearch(t *testing.T) {
 	d := distro.New(distro.Alpine, "3.18", "")
 	vuln := vulnerability.Vulnerability{
 		Reference:   vulnerability.Reference{ID: "CVE-2026-1", Namespace: "alpine:distro:alpine:3.18"},
@@ -68,27 +70,20 @@ func TestProvider_SourcePackageNameSearch(t *testing.T) {
 
 	for _, tt := range []struct {
 		name     string
-		criteria vulnerability.Criteria
+		criteria []vulnerability.Criteria
 		want     match.Type
 	}{
-		{name: "own name", criteria: search.ByPackageName("busybox"), want: match.ExactDirectMatch},
-		{name: "own name, searched as an upstream", criteria: search.BySourcePackageName("busybox"), want: match.ExactIndirectMatch},
-		{name: "another name", criteria: search.ByPackageName("other"), want: match.ExactIndirectMatch},
+		{name: "own name", criteria: []vulnerability.Criteria{search.ByPackageName("busybox")}, want: match.ExactDirectMatch},
+		{name: "own name, searched as an upstream", criteria: []vulnerability.Criteria{search.ByPackageName("busybox"), search.BySourcePackage()}, want: match.ExactIndirectMatch},
+		{name: "another name", criteria: []vulnerability.Criteria{search.ByPackageName("other")}, want: match.ExactIndirectMatch},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := rp.FindResults(tt.criteria, search.ByDistro(*d))
+			got, err := rp.FindResults(append(tt.criteria, search.ByDistro(*d))...)
 			require.NoError(t, err)
 			require.Len(t, got["CVE-2026-1"], 1)
 			r := got["CVE-2026-1"][0]
 			assert.Equal(t, []match.Type{tt.want}, r.Details.Types())
-			assert.Equal(t, Rank{Stream: StreamOwn, Kind: tt.want}, r.Rank)
+			assert.Equal(t, Rank{MatchType: tt.want}, r.Rank)
 		})
 	}
-}
-
-func TestFanOutNames_KeepsIndirectness(t *testing.T) {
-	cs := []vulnerability.Criteria{search.BySourcePackageName("rf-curl"), search.ByDistro(*distro.New(distro.Debian, "12", ""))}
-	got := fanOutNames([]ruledSearch{{criteria: cs}}, []string{"curl"}, 0)
-	require.Len(t, got, 2)
-	assert.Equal(t, search.BySourcePackageName("curl"), got[1].criteria[0])
 }

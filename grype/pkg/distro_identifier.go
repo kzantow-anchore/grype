@@ -14,7 +14,7 @@ func applyDistroIdentifiers(s *sbom.SBOM, d *distro.Distro, identifiers []distro
 	}
 
 	for _, id := range identifiers {
-		if id.Apply == distro.ChannelNeverEnabled || !identifierTriggered(id, s) {
+		if id.Apply == distro.IdentifierNever || !identifierTriggered(id, s) {
 			continue
 		}
 		newID, ok := id.DistroIDs[d.ID()]

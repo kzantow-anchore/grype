@@ -14,7 +14,7 @@ import (
 )
 
 func MatchPackageByLanguage(store vulnerability.Provider, p pkg.Package, matcherType match.MatcherType) ([]match.Match, []match.IgnoreFilter, error) {
-	if isUnknownVersion(p.Version) {
+	if IsUnknownVersion(p.Version) {
 		log.WithFields("package", p.Name).Trace("skipping package with unknown version")
 		return nil, nil, nil
 	}
@@ -43,7 +43,7 @@ func MatchPackageByLanguage(store vulnerability.Provider, p pkg.Package, matcher
 	disclosures, notVulnerable := SplitVulnerable(applicable, pkgVersion)
 
 	// only NAKs become ignores: a fixed record speaks only for this version
-	return disclosures.ToMatches(), constructIgnoreFilters(naks(notVulnerable), p), nil
+	return disclosures.ToMatches(p), constructIgnoreFilters(naks(notVulnerable), p), nil
 }
 
 func naks(s result.Set) result.Set {
@@ -51,7 +51,7 @@ func naks(s result.Set) result.Set {
 }
 
 func MatchPackageByEcosystemPackageName(vp vulnerability.Provider, p pkg.Package, packageName string, matcherType match.MatcherType) ([]match.Match, []match.IgnoreFilter, error) {
-	if isUnknownVersion(p.Version) {
+	if IsUnknownVersion(p.Version) {
 		log.WithFields("package", p.Name).Trace("skipping package with unknown version")
 		return nil, nil, nil
 	}
@@ -60,8 +60,6 @@ func MatchPackageByEcosystemPackageName(vp vulnerability.Provider, p pkg.Package
 
 	pkgVersion := version.New(p.Version, pkg.VersionFormat(p))
 
-	// TODO: previous impl set confidence to 1, this results in
-	// a confidence of zero. What should it be?
 	searched := p
 	searched.Name = packageName
 	applicable, err := provider.FindAll(
@@ -77,7 +75,7 @@ func MatchPackageByEcosystemPackageName(vp vulnerability.Provider, p pkg.Package
 
 	disclosures, notVulnerable := SplitVulnerable(applicable, pkgVersion)
 
-	return disclosures.ToMatches(), constructIgnoreFilters(naks(notVulnerable), p), nil
+	return disclosures.ToMatches(p), constructIgnoreFilters(naks(notVulnerable), p), nil
 }
 
 func constructIgnoreFilters(unaffectedVulns result.Set, p pkg.Package) []match.IgnoreFilter {

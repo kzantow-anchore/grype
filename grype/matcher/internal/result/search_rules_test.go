@@ -1,199 +1,82 @@
 package result
 
 import (
-	"regexp"
-	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	v6 "github.com/anchore/grype/grype/db/v6"
-	"github.com/anchore/grype/grype/distro"
+	"github.com/anchore/grype/grype/match"
 	"github.com/anchore/grype/grype/pkg"
 	"github.com/anchore/grype/grype/search"
 	"github.com/anchore/grype/grype/vulnerability"
 	"github.com/anchore/grype/grype/vulnerability/mock"
-	"github.com/anchore/syft/syft/cpe"
 	syftPkg "github.com/anchore/syft/syft/pkg"
 )
 
-// channelRule adds channel to the subject's OS when the searched name and version match.
-type channelRule struct {
-	name, version, channel string
-}
-
-// ruleProvider resolves a fixed rule set against the subject it is handed, as the DB provider does.
-type ruleProvider struct {
-	vulnerability.Provider
-	rules []channelRule
-}
-
-var _ v6.SearchRuleProvider = ruleProvider{}
-
-func (p ruleProvider) SearchRewrites(searched pkg.Package) v6.SearchRewrites {
-	var out v6.SearchRewrites
-	for _, r := range p.rules {
-		if searched.Distro == nil || !regexpMatch(r.name, searched.Name) || !regexpMatch(r.version, searched.Version) {
-			continue
-		}
-		d := *searched.Distro
-		d.Channels = []string{r.channel}
-		out.Distros = append(out.Distros, d)
-	}
-	return out
-}
-
-func regexpMatch(pattern, s string) bool {
-	return s != "" && regexp.MustCompile("^(?:"+pattern+")$").MatchString(s)
-}
-
-func TestApplySearchRules_EvaluatesSearchedPackageNotCatalogedPackage(t *testing.T) {
-	rf := *distro.New(distro.RapidFortRedHat, "9", "")
-
-	// the search is for the source package, under another name and an epoch-less version; only the
-	// searched package may select a rule
-	cataloged := pkg.Package{Name: "libfoo", Version: "1:1.0-1.el9", Type: syftPkg.RpmPkg, Distro: &rf}
-
-	vp := ruleProvider{
-		Provider: mock.VulnerabilityProvider(),
-		rules: []channelRule{
-			// selected by the searched name
-			{name: `rf-.*`, version: `.*`, channel: "rf"},
-			// selected by the searched version
-			{name: `.*`, version: `.*\.fc43`, channel: "fc43"},
-			// would be selected by the cataloged version, must not be
-			{name: `.*`, version: `1:.*`, channel: "wrong"},
-		},
-	}
-
-	cs := []vulnerability.Criteria{
-		search.ByPackageName("rf-foo"),
-		search.ByDistro(rf),
-		search.WithPackage(pkg.Package{Name: "rf-foo", Version: "1.0-1.fc43", Type: syftPkg.RpmPkg, Distro: &rf}),
-	}
-
-	got := applySearchRules(vp, cataloged, cs)
-
-	type searched struct {
-		channels string
-		stream   Stream
-	}
-	var searches []searched
-	for _, s := range got {
-		dc := s.criteria[1].(*search.DistroCriteria)
-		require.Len(t, dc.Distros, 1)
-		searches = append(searches, searched{channels: strings.Join(dc.Distros[0].Channels, ","), stream: s.stream})
-	}
-	require.ElementsMatch(t, []searched{
-		{channels: "", stream: StreamOwn},
-		{channels: "rf", stream: StreamRuled},
-		{channels: "fc43", stream: StreamRuled},
-	}, searches)
-}
-
-// fixedRewrites resolves every search to the same rewrites, recording the package it was asked about.
+// fixedRewrites rewrites every search to the same criteria, recording what it was asked about.
 type fixedRewrites struct {
 	vulnerability.Provider
-	rewrites v6.SearchRewrites
-	asked    *[]pkg.Package
+	rewrite func(cs []vulnerability.Criteria) [][]vulnerability.Criteria
+	asked   *[]pkg.Package
 }
 
 var _ v6.SearchRuleProvider = fixedRewrites{}
 
-func (p fixedRewrites) SearchRewrites(searched pkg.Package) v6.SearchRewrites {
-	*p.asked = append(*p.asked, searched)
-	return p.rewrites
+func (p fixedRewrites) SearchRewrites(catalogedPkg pkg.Package, cs []vulnerability.Criteria) ([][]vulnerability.Criteria, bool) {
+	*p.asked = append(*p.asked, catalogedPkg)
+	return p.rewrite(cs), true
 }
 
-func TestApplySearchRules_CPESearchIsAnOSLessPartitionSearch(t *testing.T) {
-	rf := distro.New(distro.RapidFortAlpine, "3.18", "")
-	cataloged := pkg.Package{Name: "curl", Version: "8.5.0-r0", Type: syftPkg.ApkPkg, Distro: rf}
-	cs := []vulnerability.Criteria{search.ByCPE(cpe.Must("cpe:2.3:a:haxx:curl:8.5.0:*:*:*:*:*:*:*", ""))}
-
-	overlay := *rf
-	overlay.Channels = []string{"rf"}
-
-	t.Run("the rules read the cataloged package, OS included", func(t *testing.T) {
-		var asked []pkg.Package
-		applySearchRules(fixedRewrites{Provider: mock.VulnerabilityProvider(), asked: &asked}, cataloged, cs)
-		require.Equal(t, []pkg.Package{cataloged}, asked)
-	})
-
-	t.Run("excluding the OS-less partition runs no search", func(t *testing.T) {
-		var asked []pkg.Package
-		vp := fixedRewrites{Provider: mock.VulnerabilityProvider(), asked: &asked, rewrites: v6.SearchRewrites{ExcludeOSLess: true}}
-		require.Empty(t, applySearchRules(vp, cataloged, cs))
-	})
-
-	t.Run("OS rows are not added to an OS-less search", func(t *testing.T) {
-		var asked []pkg.Package
-		vp := fixedRewrites{Provider: mock.VulnerabilityProvider(), asked: &asked, rewrites: v6.SearchRewrites{Distros: []distro.Distro{overlay}}}
-		got := applySearchRules(vp, cataloged, cs)
-		require.Len(t, got, 1)
-		require.Equal(t, cs, got[0].criteria)
-	})
-
-	t.Run("the package's own OS search is never excluded", func(t *testing.T) {
-		var asked []pkg.Package
-		vp := fixedRewrites{Provider: mock.VulnerabilityProvider(), asked: &asked, rewrites: v6.SearchRewrites{ExcludeOSLess: true}}
-		distroSearch := []vulnerability.Criteria{search.ByPackageName("curl"), search.ByDistro(*rf)}
-		got := applySearchRules(vp, cataloged, distroSearch)
-		require.Len(t, got, 1)
-		require.Equal(t, distroSearch, got[0].criteria)
-	})
+func TestSearchRewrites_ProviderWithoutRulesSearchesAsIs(t *testing.T) {
+	searches, rewritten := searchRewrites(mock.VulnerabilityProvider(), pkg.Package{}, []vulnerability.Criteria{search.ByPackageName("curl")})
+	assert.False(t, rewritten)
+	assert.Nil(t, searches)
 }
 
-func TestApplySearchRules_OSSearch(t *testing.T) {
-	deb := *distro.New(distro.Debian, "12", "")
-	cataloged := pkg.Package{Name: "rf-curl", Version: "7.88.1-10+deb12u5.echo1", Type: syftPkg.DebPkg, Distro: &deb}
-	cs := []vulnerability.Criteria{search.ByPackageName("rf-curl"), search.ByDistro(deb)}
-
-	echo := *distro.New(distro.Echo, "12", "")
-	var asked []pkg.Package
-	vp := fixedRewrites{Provider: mock.VulnerabilityProvider(), asked: &asked, rewrites: v6.SearchRewrites{
-		Distros:      []distro.Distro{echo, deb}, // the second reads the package's own rows again
-		PackageNames: []string{"curl"},
-	}}
-
-	got := applySearchRules(vp, cataloged, cs)
-
-	require.Equal(t, []pkg.Package{cataloged}, asked, "a search stating no package is for the cataloged package")
-
-	type searched struct {
-		name, distro string
-		stream       Stream
+func TestProvider_RanksBySearchRule(t *testing.T) {
+	p := pkg.Package{Name: "curl", Version: "1.0", Type: syftPkg.ApkPkg}
+	vuln := func(id, name string) vulnerability.Vulnerability {
+		return vulnerability.Vulnerability{Reference: vulnerability.Reference{ID: id, Namespace: "ns"}, PackageName: name}
 	}
-	var searches []searched
-	for _, s := range got {
-		searches = append(searches, searched{
-			name:   s.criteria[0].(*search.PackageNameCriteria).PackageName,
-			distro: s.criteria[1].(*search.DistroCriteria).Distros[0].Name(),
-			stream: s.stream,
-		})
-	}
-	require.Equal(t, []searched{
-		{name: "rf-curl", distro: "debian", stream: StreamOwn},
-		{name: "curl", distro: "debian", stream: StreamOwn},
-		{name: "rf-curl", distro: "echo", stream: StreamRuled},
-		{name: "curl", distro: "echo", stream: StreamRuled},
-	}, searches)
-}
-
-func TestApplySearchRules_EcosystemSearchReadsNoOS(t *testing.T) {
-	rf := distro.New(distro.RapidFortRedHat, "9", "")
-	cataloged := pkg.Package{Name: "rf-requests", Version: "2.31.0", Language: syftPkg.Python, Type: syftPkg.PythonPkg, Distro: rf}
-	searched := cataloged
-	searched.Name = "requests"
 
 	var asked []pkg.Package
-	vp := fixedRewrites{Provider: mock.VulnerabilityProvider(), asked: &asked}
-	applySearchRules(vp, cataloged, []vulnerability.Criteria{
-		search.ByEcosystem(cataloged.Language, cataloged.Type),
-		search.ByPackageName(searched.Name),
-		search.WithPackage(searched),
-	})
+	vp := fixedRewrites{
+		Provider: mock.VulnerabilityProvider(vuln("CVE-1", "curl"), vuln("CVE-2", "rf-curl"), vuln("CVE-3", "fips-curl")),
+		asked:    &asked,
+		rewrite: func(cs []vulnerability.Criteria) [][]vulnerability.Criteria {
+			return [][]vulnerability.Criteria{
+				cs,
+				{search.ByPackageName("rf-curl"), search.ByRule(30)},
+				{search.ByPackageName("fips-curl"), search.ByRule(-5)},
+			}
+		},
+	}
 
-	want := searched
-	want.Distro = nil
-	require.Equal(t, []pkg.Package{want}, asked, "the package was found on an OS, but the search reads none")
+	got, err := NewProvider(vp, p, match.ApkMatcher).FindResults(search.ByPackageName("curl"))
+	require.NoError(t, err)
+
+	require.Equal(t, []pkg.Package{p}, asked, "the rules are asked about the cataloged package")
+
+	rankOfID := func(id string) Rank {
+		require.Len(t, got[id], 1, id)
+		return got[id][0].Rank
+	}
+	assert.Equal(t, Rank{}, rankOfID("CVE-1"))
+	assert.Equal(t, Rank{FromSearchRule: true, RulePriority: 30}, rankOfID("CVE-2"))
+	assert.Equal(t, Rank{FromSearchRule: true, RulePriority: -5}, rankOfID("CVE-3"))
+	assert.Positive(t, rankOfID("CVE-3").Compare(rankOfID("CVE-1")), "any rule outranks the package's own rows")
+}
+
+func TestProvider_RewriteToNothingSearchesNothing(t *testing.T) {
+	var asked []pkg.Package
+	vp := fixedRewrites{
+		Provider: mock.VulnerabilityProvider(vulnerability.Vulnerability{Reference: vulnerability.Reference{ID: "CVE-1"}, PackageName: "curl"}),
+		asked:    &asked,
+		rewrite:  func([]vulnerability.Criteria) [][]vulnerability.Criteria { return nil },
+	}
+	got, err := NewProvider(vp, pkg.Package{Name: "curl"}, match.ApkMatcher).FindResults(search.ByPackageName("curl"))
+	require.NoError(t, err)
+	assert.Empty(t, got)
 }

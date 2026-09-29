@@ -29,16 +29,6 @@ func TestNewSearchCriteria(t *testing.T) {
 			},
 		},
 		{
-			name: "indirect package name criteria is searched as a package name",
-			criteria: []vulnerability.Criteria{
-				search.BySourcePackageName("test-package"),
-			},
-			validate: func(t *testing.T, input *searchQuery) {
-				require.NotNil(t, input.pkgSpec)
-				require.Equal(t, "test-package", input.pkgSpec.Name)
-			},
-		},
-		{
 			name: "unaffected criteria sets flag",
 			criteria: []vulnerability.Criteria{
 				search.ForUnaffected(),

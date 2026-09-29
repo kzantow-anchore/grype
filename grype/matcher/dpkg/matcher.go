@@ -88,13 +88,13 @@ func (m *Matcher) Match(store vulnerability.Provider, p pkg.Package) ([]match.Ma
 func (m *Matcher) matchUbuntuESM(store vulnerability.Provider, p pkg.Package) ([]match.Match, []match.IgnoreFilter, error) {
 	provider := result.NewProvider(store, p, m.Type())
 
-	matches, ignores, err := ubuntuESMMatches(provider, p, m.cfg.MissingEpochStrategy)
+	matches, ignores, err := ubuntuESMMatches(provider, p, p, m.cfg.MissingEpochStrategy)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to match by exact package name: %w", err)
 	}
 
 	for _, indirectPackage := range pkg.UpstreamPackages(p) {
-		indirectMatches, indirectIgnores, err := ubuntuESMMatches(provider, indirectPackage, m.cfg.MissingEpochStrategy)
+		indirectMatches, indirectIgnores, err := ubuntuESMMatches(provider, p, indirectPackage, m.cfg.MissingEpochStrategy)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to find vulnerabilities for dpkg upstream source package: %w", err)
 		}

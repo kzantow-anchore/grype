@@ -20,11 +20,11 @@ type DistroIdentifier struct {
 func (o *DistroIdentifier) PostLoad() error {
 	o.Apply = strings.ToLower(o.Apply)
 	if o.Apply == "" {
-		o.Apply = string(distro.ChannelConditionallyEnabled)
+		o.Apply = string(distro.IdentifierAuto)
 	}
 
-	switch distro.FixChannelEnabled(o.Apply) {
-	case distro.ChannelNeverEnabled, distro.ChannelConditionallyEnabled:
+	switch distro.IdentifierApply(o.Apply) {
+	case distro.IdentifierNever, distro.IdentifierAuto:
 		return nil
 	default:
 		return fmt.Errorf("invalid apply value %q: must be 'never' or 'auto'", o.Apply)

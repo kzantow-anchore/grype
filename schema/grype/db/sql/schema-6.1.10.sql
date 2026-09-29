@@ -69,10 +69,6 @@ CREATE INDEX `idx_operating_systems_minor_version` ON `operating_systems`(`minor
 
 CREATE INDEX `idx_package_name` ON `packages`(`name` COLLATE NOCASE);
 
-CREATE INDEX `idx_search_rules_match_ecosystem` ON `search_rules`(`match_ecosystem`);
-
-CREATE INDEX `idx_search_rules_priority` ON `search_rules`(`priority`);
-
 CREATE INDEX `idx_unaffected_cpe_handles_cpe_id` ON `unaffected_cpe_handles`(`cpe_id`);
 
 CREATE INDEX `idx_unaffected_package_handles_operating_system_id` ON `unaffected_package_handles`(`operating_system_id`);
@@ -96,8 +92,6 @@ CREATE INDEX `kev_cve_idx` ON `known_exploited_vulnerability_handles`(`cve` COLL
 CREATE INDEX `os_alias_idx` ON `operating_system_specifier_overrides`(`alias` COLLATE NOCASE);
 
 CREATE INDEX `pkg_ecosystem_idx` ON `package_specifier_overrides`(`ecosystem` COLLATE NOCASE);
-
-CREATE INDEX `search_rule_distro_idx` ON `search_rules`(`match_distro_name` COLLATE NOCASE);
 
 CREATE UNIQUE INDEX `idx_cpe` ON `cpes`(`part` COLLATE NOCASE,`vendor` COLLATE NOCASE,`product` COLLATE NOCASE,`edition` COLLATE NOCASE,`language` COLLATE NOCASE,`software_edition` COLLATE NOCASE,`target_hardware` COLLATE NOCASE,`target_software` COLLATE NOCASE,`other` COLLATE NOCASE);
 
